@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "financial-sigint-ingress"
-version = "0.1.0"
+version = "0.0.1"
 description = "Ingress (ADC) microservice for analyzing the market impact of Nasdaq news using a local LLM (Ollama)."
 authors = ["Financial SIGINT Team"]
 readme = "README.md"
