@@ -1,6 +1,6 @@
 ---
 name: Bug Report
-about: e.g. Create a report to help improve SIGINT Financiero.
+about: e.g. Create a report to help improve Financial SIGINT.
 title: "[BUG]"
 labels: bug
 Assignees: e.g. alesan121

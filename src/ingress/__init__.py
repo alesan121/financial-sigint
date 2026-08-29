@@ -1,4 +1,4 @@
 """
-SIGINT Financiero - Microservicio Ingress (ADC).
-Punto de entrada del paquete Python.
+Financial SIGINT - Ingress Microservice (ADC).
+Python package entry point.
 """

@@ -122,7 +122,7 @@ async def main(news_text: str) -> None:
 
     if _RICH_AVAILABLE and _console:
         _console.print(f"\n[bold blue]{'='*70}[/bold blue]")
-        _console.print(f"🚀 [bold]SIGINT FINANCIERO[/bold] | DEFCON 1 Diagnostics Terminal")
+        _console.print(f"🚀 [bold]FINANCIAL SIGINT[/bold] | DEFCON 1 Diagnostics Terminal")
         _console.print(f"[bold blue]{'='*70}[/bold blue]\n")
         _console.print(f"[yellow]Trigger Time :[/yellow] {ts}")
         _console.print(f"[yellow]Signal ID    :[/yellow] {thread_id}")

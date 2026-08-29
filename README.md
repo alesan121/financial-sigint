@@ -1,10 +1,10 @@
-# SIGINT Financiero
+# Financial SIGINT
 
-`SIGINT Financiero` is an air-gapped, local-first pipeline that turns financial news, insider filings, options flow and macro data into trading signals — analyzed entirely by a locally-hosted LLM (Ollama), with zero calls to external inference APIs.
+`Financial SIGINT` is an air-gapped, local-first pipeline that turns financial news, insider filings, options flow and macro data into trading signals — analyzed entirely by a locally-hosted LLM (Ollama), with zero calls to external inference APIs.
 
 ## Table of Contents
 
-- [SIGINT Financiero](#sigint-financiero)
+- [Financial SIGINT](#financial-sigint)
   - [Table of Contents](#table-of-contents)
   - [🏗️ System Architecture](#️-system-architecture)
     - [📡 Ingress (ADC) — Signal Acquisition](#-ingress-adc--signal-acquisition)

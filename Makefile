@@ -22,7 +22,7 @@ SERVICE_PORT  = 8000
 
 help: ## Shows this help
 	@echo ""
-	@echo "SIGINT Financiero - Ingress (ADC) - Available commands:"
+	@echo "Financial SIGINT - Ingress (ADC) - Available commands:"
 	@echo "============================================================"
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'

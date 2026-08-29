@@ -1,5 +1,5 @@
 # =============================================================================
-# Multi-Stage Dockerfile - SIGINT Financiero Ingress (ADC)
+# Multi-Stage Dockerfile - Financial SIGINT Ingress (ADC)
 #
 # Hardware analogy: a two-phase manufacturing process.
 # Stage 1 (builder): The "assembly line" — installs build tools, compiles
@@ -17,7 +17,7 @@
 FROM python:3.12-slim AS builder
 
 # Image metadata
-LABEL maintainer="SIGINT Financiero Team"
+LABEL maintainer="Financial SIGINT Team"
 LABEL stage="builder"
 
 # Environment variables for Poetry and Python
@@ -51,9 +51,9 @@ RUN poetry export --format=requirements.txt --output=requirements.txt --only=mai
 # =============================================================================
 FROM python:3.12-slim AS runtime
 
-LABEL maintainer="SIGINT Financiero Team"
+LABEL maintainer="Financial SIGINT Team"
 LABEL version="0.1.0"
-LABEL description="SIGINT Financiero - Ingress Microservice (ADC)"
+LABEL description="Financial SIGINT - Ingress Microservice (ADC)"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
