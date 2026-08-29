@@ -26,7 +26,7 @@ import asyncio
 import hashlib
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import aiosqlite
 import httpx
@@ -40,14 +40,14 @@ logger = logging.getLogger(__name__)
 
 # 🔧 SRE FIX: Point directly at the Asynchronous FSM Bus
 ORCHESTRATOR_URL: str = os.getenv("ORCHESTRATOR_URL", "http://orchestrator:8001/trigger")
-DB_PATH: str          = os.getenv("SCOUT_DB_PATH", "/data/scout_seen.db")
+DB_PATH: str = os.getenv("SCOUT_DB_PATH", "/data/scout_seen.db")
 
 # Weekly polling: FINRA publishes SI twice a month (1st and 3rd week)
 POLL_INTERVAL_SECONDS: int = int(os.getenv("SHORT_POLL_INTERVAL_SECONDS", "86400"))  # 24h
 
 # Squeeze thresholds
-MIN_SHORT_FLOAT_PCT: float = float(os.getenv("SHORT_MIN_FLOAT_PCT", "15.0"))   # 15% of float
-MIN_SHORT_RATIO:     float = float(os.getenv("SHORT_MIN_RATIO", "5.0"))        # 5 days to cover
+MIN_SHORT_FLOAT_PCT: float = float(os.getenv("SHORT_MIN_FLOAT_PCT", "15.0"))  # 15% of float
+MIN_SHORT_RATIO: float = float(os.getenv("SHORT_MIN_RATIO", "5.0"))  # 5 days to cover
 
 # Broad watchlist: includes both mega-caps and small/mid-caps with historically high SI
 WATCHLIST: list[str] = [
@@ -59,7 +59,7 @@ WATCHLIST: list[str] = [
         # Biotech and small caps (historically high SI)
         "MRNA,BNTX,RIVN,LCID,SOFI,UPST,AFRM,HOOD,WISH,"
         # Retail/meme sector
-        "GME,AMC,BBBY,SPCE"
+        "GME,AMC,BBBY,SPCE",
     ).split(",")
     if ticker.strip()
 ]
@@ -68,6 +68,7 @@ WATCHLIST: list[str] = [
 # DEDUPLICATOR
 # =============================================================================
 
+
 async def _ensure_db(conn: aiosqlite.Connection) -> None:
     await conn.execute(
         "CREATE TABLE IF NOT EXISTS seen_signals "
@@ -75,20 +76,24 @@ async def _ensure_db(conn: aiosqlite.Connection) -> None:
     )
     await conn.commit()
 
+
 async def _is_seen(conn: aiosqlite.Connection, h: str) -> bool:
     async with conn.execute("SELECT 1 FROM seen_signals WHERE hash=?", (h,)) as c:
         return await c.fetchone() is not None
 
+
 async def _mark_seen(conn: aiosqlite.Connection, h: str, src: str) -> None:
     await conn.execute(
         "INSERT OR IGNORE INTO seen_signals (hash, source, seen_at) VALUES (?,?,?)",
-        (h, src, datetime.now(timezone.utc).isoformat()),
+        (h, src, datetime.now(UTC).isoformat()),
     )
     await conn.commit()
+
 
 # =============================================================================
 # ACQUISITION: Short Interest via yfinance
 # =============================================================================
+
 
 def _get_short_data(ticker: str) -> dict | None:
     """
@@ -97,27 +102,27 @@ def _get_short_data(ticker: str) -> dict | None:
     """
     try:
         info = yf.Ticker(ticker).info
-        current_price   = float(info.get("currentPrice") or info.get("regularMarketPrice") or 0)
+        current_price = float(info.get("currentPrice") or info.get("regularMarketPrice") or 0)
         short_pct_float = float(info.get("shortPercentOfFloat") or 0) * 100  # Convert to %
-        short_ratio     = float(info.get("shortRatio") or 0)
-        shares_short    = int(info.get("sharesShort") or 0)
-        sma20           = float(info.get("fiftyDayAverage") or 0)   # Approximation using SMA50
-        market_cap      = float(info.get("marketCap") or 0)
-        company_name    = str(info.get("longName") or ticker)
+        short_ratio = float(info.get("shortRatio") or 0)
+        shares_short = int(info.get("sharesShort") or 0)
+        sma20 = float(info.get("fiftyDayAverage") or 0)  # Approximation using SMA50
+        market_cap = float(info.get("marketCap") or 0)
+        company_name = str(info.get("longName") or ticker)
 
         if current_price <= 0:
             return None
 
         return {
-            "ticker":           ticker,
-            "name":             company_name,
-            "price":            current_price,
-            "short_pct_float":  short_pct_float,
-            "short_ratio":      short_ratio,
-            "shares_short":     shares_short,
-            "sma50":            sma20,
-            "market_cap":       market_cap,
-            "above_sma":        current_price > sma20 if sma20 > 0 else False,
+            "ticker": ticker,
+            "name": company_name,
+            "price": current_price,
+            "short_pct_float": short_pct_float,
+            "short_ratio": short_ratio,
+            "shares_short": shares_short,
+            "sma50": sma20,
+            "market_cap": market_cap,
+            "above_sma": current_price > sma20 if sma20 > 0 else False,
         }
     except Exception as e:
         logger.debug("[ShortScout][%s] Error getting data: %s", ticker, e)
@@ -135,10 +140,7 @@ def _is_squeeze_candidate(data: dict) -> bool:
     Bonus condition (accelerator):
     3. Price above SMA50 (the market is already pressuring the shorts)
     """
-    return (
-        data["short_pct_float"] >= MIN_SHORT_FLOAT_PCT and
-        data["short_ratio"]     >= MIN_SHORT_RATIO
-    )
+    return data["short_pct_float"] >= MIN_SHORT_FLOAT_PCT and data["short_ratio"] >= MIN_SHORT_RATIO
 
 
 def _format_signal(data: dict) -> tuple[str, str]:
@@ -150,7 +152,7 @@ def _format_signal(data: dict) -> tuple[str, str]:
         "upward momentum that could accelerate the squeeze."
         if data["above_sma"]
         else "The stock is currently below its 50-day moving average. "
-             "A bullish catalyst is needed to trigger the squeeze."
+        "A bullish catalyst is needed to trigger the squeeze."
     )
 
     text = (
@@ -167,13 +169,15 @@ def _format_signal(data: dict) -> tuple[str, str]:
         f"Analyze the setup and define entry/exit levels for {ticker}."
     )
     # Weekly hash: the same ticker isn't alerted twice in the same week
-    week = datetime.now(timezone.utc).strftime("%Y-W%W")
+    week = datetime.now(UTC).strftime("%Y-W%W")
     h = hashlib.sha256(f"short:{ticker}:{week}".encode()).hexdigest()
     return text, h
+
 
 # =============================================================================
 # MAIN CYCLE
 # =============================================================================
+
 
 async def _scan_once(client: httpx.AsyncClient, conn: aiosqlite.Connection) -> None:
     """Scans the watchlist looking for short squeeze candidates."""
@@ -203,15 +207,17 @@ async def _scan_once(client: httpx.AsyncClient, conn: aiosqlite.Connection) -> N
         try:
             # 🔧 SRE FIX: Direct wiring to the FSM Gateway (v4.0)
             payload = {
-                "ticker": data['ticker'],
+                "ticker": data["ticker"],
                 "text": text,
-                "source": f"Short Interest Alert — {data['ticker']}"
+                "source": f"Short Interest Alert — {data['ticker']}",
             }
             resp = await client.post(ORCHESTRATOR_URL, json=payload, timeout=10.0)
             resp.raise_for_status()
 
             ack = resp.json()
-            logger.info(f"[ShortScout][{data['ticker']}] ✅ FSM Cycle Queued | thread={ack.get('thread_id')}")
+            logger.info(
+                f"[ShortScout][{data['ticker']}] ✅ FSM Cycle Queued | thread={ack.get('thread_id')}"
+            )
             await _mark_seen(conn, h, f"short:{data['ticker']}")
             dispatched += 1
         except Exception as e:
@@ -219,7 +225,8 @@ async def _scan_once(client: httpx.AsyncClient, conn: aiosqlite.Connection) -> N
 
     logger.info(
         "[ShortScout] Cycle completed | %d candidates detected | %d dispatched",
-        len(squeeze_candidates), dispatched,
+        len(squeeze_candidates),
+        dispatched,
     )
 
 
@@ -231,7 +238,9 @@ async def main() -> None:
     logger.info(
         "=== SIGINT Short Interest Scout v1.0 ===\n"
         "Watchlist: %d tickers | Min SI: %.0f%% float | Min ratio: %.0f days",
-        len(WATCHLIST), MIN_SHORT_FLOAT_PCT, MIN_SHORT_RATIO,
+        len(WATCHLIST),
+        MIN_SHORT_FLOAT_PCT,
+        MIN_SHORT_RATIO,
     )
 
     async with aiosqlite.connect(DB_PATH) as conn:
@@ -245,7 +254,11 @@ async def main() -> None:
                     await _scan_once(client, conn)
                 except Exception as e:
                     logger.error("[ShortScout] Unexpected error: %s", e, exc_info=True)
-                logger.info("[ShortScout] 💤 Next cycle in %ds (%dh)", POLL_INTERVAL_SECONDS, POLL_INTERVAL_SECONDS // 3600)
+                logger.info(
+                    "[ShortScout] 💤 Next cycle in %ds (%dh)",
+                    POLL_INTERVAL_SECONDS,
+                    POLL_INTERVAL_SECONDS // 3600,
+                )
                 await asyncio.sleep(POLL_INTERVAL_SECONDS)
 
 

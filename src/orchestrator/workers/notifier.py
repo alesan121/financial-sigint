@@ -7,11 +7,10 @@ mission is to translate digital bus events into visual signals
 (Telegram) for the human operator.
 """
 
-import logging
-import os
 import asyncio
+import logging
+
 import httpx
-from datetime import datetime, timezone
 
 from orchestrator.core.config import get_orchestrator_settings
 
@@ -23,16 +22,19 @@ _SEND_URL = "https://api.telegram.org/bot{token}/sendMessage"
 _EDIT_URL = "https://api.telegram.org/bot{token}/editMessageText"
 _ANSWER_URL = "https://api.telegram.org/bot{token}/answerCallbackQuery"
 
+
 async def send_trade_alert(
-    message: str, 
-    parse_mode: str = "Markdown", 
-    disable_notification: bool = False
+    message: str, parse_mode: str = "Markdown", disable_notification: bool = False
 ) -> bool:
     """
     Alert Transmitter: Sends an information pulse to the user's terminal.
     """
     settings = get_orchestrator_settings()
-    token = settings.telegram_bot_token.get_secret_value() if hasattr(settings.telegram_bot_token, "get_secret_value") else settings.telegram_bot_token
+    token = (
+        settings.telegram_bot_token.get_secret_value()
+        if hasattr(settings.telegram_bot_token, "get_secret_value")
+        else settings.telegram_bot_token
+    )
     chat_id = settings.telegram_chat_id
 
     if not token or not chat_id:
@@ -52,7 +54,7 @@ async def send_trade_alert(
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.post(url, json=payload)
             if resp.status_code == 200:
-                logger.debug(f"✅ [Radio] Signal emitted successfully.")
+                logger.debug("✅ [Radio] Signal emitted successfully.")
                 return True
             else:
                 logger.error(f"💥 [Radio_Fault] Telegram responded with code {resp.status_code}.")
@@ -61,12 +63,14 @@ async def send_trade_alert(
         logger.error(f"🚨 [Radio_Critical] Physical failure in the transmitter: {e}")
         return False
 
+
 async def send_system_alert(message: str) -> bool:
     """
     Survival Alert: Notifies critical failures (Kill-Switch, Drawdown).
     """
     urgent_msg = f"🚨 *SIGINT SYSTEM FAULT* 🚨\n\n{message}"
     return await send_trade_alert(urgent_msg, disable_notification=False)
+
 
 def send_trade_alert_sync(message: str) -> None:
     """
@@ -81,6 +85,7 @@ def send_trade_alert_sync(message: str) -> None:
     except Exception as e:
         logger.warning(f"⚠️ [Notifier] Failure in synchronous bypass: {e}")
 
+
 # 🔧 HITL REDESIGN: Control Bus Decoupling
 async def notify_hitl_request(message: str, thread_id: str) -> bool:
     """
@@ -90,10 +95,15 @@ async def notify_hitl_request(message: str, thread_id: str) -> bool:
     Resumption is managed via the FSM Gateway (/approve).
     """
     settings = get_orchestrator_settings()
-    token = settings.telegram_bot_token.get_secret_value() if hasattr(settings.telegram_bot_token, "get_secret_value") else settings.telegram_bot_token
+    token = (
+        settings.telegram_bot_token.get_secret_value()
+        if hasattr(settings.telegram_bot_token, "get_secret_value")
+        else settings.telegram_bot_token
+    )
     chat_id = settings.telegram_chat_id
-    
-    if not token or not chat_id: return False
+
+    if not token or not chat_id:
+        return False
 
     url = _SEND_URL.format(token=token)
 
@@ -109,7 +119,7 @@ async def notify_hitl_request(message: str, thread_id: str) -> bool:
                     {"text": "❌ REJECT", "callback_data": f"reject_{thread_id}"},
                 ]
             ]
-        }
+        },
     }
 
     try:

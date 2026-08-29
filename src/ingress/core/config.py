@@ -7,14 +7,17 @@ Variables are injected from the environment, never hardcoded into the silicon.
 """
 
 from functools import lru_cache
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
 
 class Settings(BaseSettings):
     """
     Configuration for the Ingress microservice (Sensors).
     Reads variables from the .env file or the operating system environment.
     """
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -41,6 +44,7 @@ class Settings(BaseSettings):
         default=6379,
         description="Redis server port.",
     )
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

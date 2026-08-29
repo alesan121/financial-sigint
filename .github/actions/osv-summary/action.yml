@@ -1,0 +1,70 @@
+name: OSV Summary
+description: >
+  Writes OSV Scanner vulnerability results to the workflow log and
+  GitHub Step Summary.
+
+inputs:
+  results-path:
+    description: Path to the OSV Scanner JSON results file.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Write OSV results to workflow summary
+      shell: bash
+      env:
+        OSV_FILE: ${{ inputs.results-path }}
+      run: |
+        if [[ ! -f "$OSV_FILE" ]]; then
+          echo "OSV results file not found — scanner may have failed to run"
+          exit 0
+        fi
+
+        TOTAL=$(jq '[.results[].packages[].vulnerabilities[].id] | unique | length' "$OSV_FILE")
+
+        # ------------------------- stdout (visible in workflow logs) -------------------------
+        if [[ "$TOTAL" -eq 0 ]]; then
+          echo "OSV Scanner: no vulnerabilities found"
+        else
+          echo "OSV Scanner found ${TOTAL} unique vulnerability/ies"
+          echo ""
+          printf "%-30s %-20s %-25s %-10s %s\n" "ID" "CVE Aliases" "Package" "Version" "Summary"
+          printf '%0.s-' {1..110}; echo ""
+          while IFS=$'\t' read -r id aliases pkg ver summary; do
+            printf "%-30s %-20s %-25s %-10s %s\n" "$id" "$aliases" "$pkg" "$ver" "$summary"
+          done < <(jq -r '
+            .results[].packages[] |
+            . as $pkg |
+            .vulnerabilities[] |
+            [
+              .id,
+              (.aliases // [] | map(select(startswith("CVE-"))) | first // "—"),
+              $pkg.package.name,
+              $pkg.package.version,
+              (.summary // "" | .[0:60])
+            ] | @tsv
+          ' "$OSV_FILE")
+        fi
+
+        # ------------------- GitHub Step Summary (Markdown) ----------------------
+        [[ -z "${GITHUB_STEP_SUMMARY:-}" ]] && exit 0
+
+        {
+          if [[ "$TOTAL" -eq 0 ]]; then
+            echo "## ✅ OSV Scanner: No vulnerabilities found"
+          else
+            [[ "$TOTAL" -eq 1 ]] && LABEL="vulnerability" || LABEL="vulnerabilities"
+            echo "## ⚠️ OSV Scanner: ${TOTAL} unique ${LABEL} found"
+            echo ""
+            echo "| ID | CVE Aliases | Package | Version | Ecosystem | Summary |"
+            echo "|----|-------------|---------|---------|-----------|---------|"
+            jq -r '
+              .results[].packages[] |
+              . as $pkg |
+              .vulnerabilities[] |
+              "| [\(.id)](https://osv.dev/vulnerability/\(.id)) | \(.aliases // [] | map(select(startswith("CVE-"))) | join(", ")) | `\($pkg.package.name)` | \($pkg.package.version) | \($pkg.package.ecosystem) | \(.summary // "" | .[0:100]) |"
+            ' "$OSV_FILE"
+            echo ""
+          fi
+        } >> "$GITHUB_STEP_SUMMARY"

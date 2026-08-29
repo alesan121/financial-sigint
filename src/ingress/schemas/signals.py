@@ -16,10 +16,9 @@ In production, these values must be validated against a real price feed
 (e.g.: yfinance, Alpaca MarketData API).
 """
 
-from typing import Literal, Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
-
 
 # Type aliases for readability
 MarketCapTier = Literal["mega", "large", "mid", "small", "unknown"]
@@ -173,9 +172,13 @@ class InvestmentSignal(BaseModel):
         return v_lower
 
     @field_validator(
-        "impact_score", "stoch_confidence", "entry_price",
-        "take_profit", "stop_loss", "kelly_fraction",
-        mode="before"
+        "impact_score",
+        "stoch_confidence",
+        "entry_price",
+        "take_profit",
+        "stop_loss",
+        "kelly_fraction",
+        mode="before",
     )
     @classmethod
     def coalesce_numeric(cls, v: Any) -> float:
@@ -184,7 +187,7 @@ class InvestmentSignal(BaseModel):
         """
         if v is None:
             return 0.0
-        if isinstance(v, (int, float)):
+        if isinstance(v, int | float):
             return float(v)
         try:
             clean_v = "".join(c for c in str(v) if c.isdigit() or c in ".-")

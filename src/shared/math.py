@@ -6,7 +6,10 @@ with no infrastructure or state dependencies (stateless).
 Allows isolated unit testing and avoids 'spaghetti code' in the Agents.
 """
 
-def compute_kelly_fraction(p: float, entry: float, tp: float, sl: float, max_kelly: float = 0.25) -> tuple[float, str]:
+
+def compute_kelly_fraction(
+    p: float, entry: float, tp: float, sl: float, max_kelly: float = 0.25
+) -> tuple[float, str]:
     """
     Computes the optimal Kelly fraction under the binary options model.
 

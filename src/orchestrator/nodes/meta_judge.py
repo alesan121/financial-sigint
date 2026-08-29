@@ -7,18 +7,18 @@ frame fails to sync, the system now dumps the raw buffer to the log
 to diagnose language interference (Thinking noise).
 """
 
-import logging
 import json
+import logging
 import re
-import asyncio
-from datetime import datetime, timezone
-from typing import Any, Dict
+from datetime import UTC, datetime
+from typing import Any
 
 from langchain_core.messages import HumanMessage
 from langchain_ollama import ChatOllama
-from orchestrator.state import TradingState
+
 from orchestrator.core.config import get_orchestrator_settings
 from orchestrator.core.observability import lqa
+from orchestrator.state import TradingState
 
 logger = logging.getLogger(__name__)
 settings = get_orchestrator_settings()
@@ -26,9 +26,9 @@ settings = get_orchestrator_settings()
 judge_llm = ChatOllama(
     base_url=settings.ollama_base_url,
     model=settings.reasoning_model,
-    temperature=0.0, 
-    format="json", # Forzamos modo JSON a nivel de driver
-    timeout=120
+    temperature=0.0,
+    format="json",  # Forzamos modo JSON a nivel de driver
+    timeout=120,
 )
 
 JUDGE_PROMPT = """[SYSTEM: CRITICAL_VALIDATOR]
@@ -42,8 +42,9 @@ SCHEMA:
   "reasoning": "Clinical explanation"
 }}"""
 
-async def node_meta_judge(state: TradingState) -> Dict[str, Any]:
-    ts = datetime.now(timezone.utc).isoformat()
+
+async def node_meta_judge(state: TradingState) -> dict[str, Any]:
+    ts = datetime.now(UTC).isoformat()
     signal = state.get("ingress_signal", {})
     risk = state.get("risk_quant", {})
     thread_id = state.get("metadata", {}).get("thread_id", "???")
@@ -54,14 +55,13 @@ async def node_meta_judge(state: TradingState) -> Dict[str, Any]:
     if rr >= 2.5:
         return {
             "risk_quant": {**risk, "routing_flag": "APPROVED"},
-            "logs": [f"[{ts}][MetaJudge] High-RR Bypass (RR={rr})"]
+            "logs": [f"[{ts}][MetaJudge] High-RR Bypass (RR={rr})"],
         }
 
     # 2. 🧠 SEMANTIC AUDIT WITH DPI FILTER
     try:
         prompt = JUDGE_PROMPT.format(
-            news=signal.get("news_text", "")[:500],
-            thesis=signal.get("reasoning", "")[:500]
+            news=signal.get("news_text", "")[:500], thesis=signal.get("reasoning", "")[:500]
         )
         response = await judge_llm.ainvoke([HumanMessage(content=prompt)])
 
@@ -69,11 +69,11 @@ async def node_meta_judge(state: TradingState) -> Dict[str, Any]:
         raw_content = response.content
 
         # Strip 'thinking' noise from DeepSeek/Phi-4-style models
-        clean_content = re.sub(r'<think>.*?</think>', '', raw_content, flags=re.DOTALL)
+        clean_content = re.sub(r"<think>.*?</think>", "", raw_content, flags=re.DOTALL)
         clean_content = clean_content.replace("```json", "").replace("```", "").strip()
 
         # Surgical search for the data block { ... }
-        match = re.search(r'(\{.*\})', clean_content, re.DOTALL)
+        match = re.search(r"(\{.*\})", clean_content, re.DOTALL)
 
         if match:
             try:
@@ -81,28 +81,38 @@ async def node_meta_judge(state: TradingState) -> Dict[str, Any]:
                 verdict = data.get("verdict", "REJECTED")
                 reason = data.get("reasoning", "No specific reason in JSON.")
             except json.JSONDecodeError:
-                verdict, reason = "REJECTED", f"PARITY_ERROR: Invalid JSON structure."
+                verdict, reason = "REJECTED", "PARITY_ERROR: Invalid JSON structure."
                 logger.error(f"💥 [DPI_FAULT] Corrupted frame for {ticker}: {raw_content[:100]}...")
         else:
-            verdict, reason = "REJECTED", f"SYNC_ERROR: No JSON found in carrier."
-            logger.error(f"💥 [DPI_MISS] No signal detected for {ticker}. Raw: {raw_content[:50]}...")
+            verdict, reason = "REJECTED", "SYNC_ERROR: No JSON found in carrier."
+            logger.error(
+                f"💥 [DPI_MISS] No signal detected for {ticker}. Raw: {raw_content[:50]}..."
+            )
 
         # 3. OUTPUT BUS UPDATE
         if verdict == "REJECTED":
             lqa.trace(thread_id, "JUDGE", f"🛑 Veto: {reason}")
             return {
-                "risk_quant": {**risk, "routing_flag": "REJECTED", "discard_reason": f"Semantic Veto: {reason}"},
-                "logs": [f"[{ts}][MetaJudge] Vetoed: {reason}"]
+                "risk_quant": {
+                    **risk,
+                    "routing_flag": "REJECTED",
+                    "discard_reason": f"Semantic Veto: {reason}",
+                },
+                "logs": [f"[{ts}][MetaJudge] Vetoed: {reason}"],
             }
 
         return {
             "risk_quant": {**risk, "routing_flag": "APPROVED"},
-            "logs": [f"[{ts}][MetaJudge] Signal Validated for {ticker}."]
+            "logs": [f"[{ts}][MetaJudge] Signal Validated for {ticker}."],
         }
 
     except Exception as e:
         logger.error(f"🚨 [JUDGE_PANIC] Thermal failure in judge node: {e}")
         return {
-            "risk_quant": {**risk, "routing_flag": "REJECTED", "discard_reason": f"System Fault: {str(e)}"},
-            "logs": [f"[{ts}][MetaJudge] Execution Fault."]
+            "risk_quant": {
+                **risk,
+                "routing_flag": "REJECTED",
+                "discard_reason": f"System Fault: {str(e)}",
+            },
+            "logs": [f"[{ts}][MetaJudge] Execution Fault."],
         }

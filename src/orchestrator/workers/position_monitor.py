@@ -10,14 +10,14 @@ loop by computing the maneuver's efficiency (PnL) once it's finished.
 import asyncio
 import logging
 import os
-import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from orchestrator.core.config import get_orchestrator_settings
-from orchestrator.workers.notifier import send_trade_alert, send_system_alert
+from orchestrator.workers.notifier import send_trade_alert
 
 # 📡 SRE PATCH: Alignment with the Global Telemetry Bus
 logger = logging.getLogger("agentops.telemetry")
+
 
 async def init_monitor_bus():
     """
@@ -25,6 +25,7 @@ async def init_monitor_bus():
     the terminals needed for PnL.
     """
     import aiosqlite
+
     settings = get_orchestrator_settings()
     db_path = settings.telemetry_db_path
 
@@ -34,40 +35,43 @@ async def init_monitor_bus():
             cols = [
                 ("pnl_usd", "REAL DEFAULT NULL"),
                 ("exit_price", "REAL DEFAULT NULL"),
-                ("closed_at", "TEXT DEFAULT NULL")
+                ("closed_at", "TEXT DEFAULT NULL"),
             ]
             for name, dtype in cols:
                 try:
                     await db.execute(f"ALTER TABLE execution_logs ADD COLUMN {name} {dtype}")
-                except Exception:
-                    pass # Column already exists on the bus
+                except Exception:  # nosec B110
+                    pass  # Column already exists on the bus
             await db.commit()
             logger.info("✅ [Monitor_Bus] Telemetry structure synchronized.")
     except Exception as e:
         logger.error(f"🚨 [Monitor_Bus_Fault] Error initializing registers: {e}")
 
+
 async def _register_closed_trade(symbol: str, pnl_usd: float, exit_price: float) -> None:
     """Injects the trade result into the Black Box (SQLite)."""
     import aiosqlite
+
     settings = get_orchestrator_settings()
     db_path = settings.telemetry_db_path
-    closed_at = datetime.now(timezone.utc).isoformat()
+    closed_at = datetime.now(UTC).isoformat()
 
     try:
         async with aiosqlite.connect(db_path) as db:
             # UPDATE: Look for the last open entry for this ticker
             await db.execute(
                 """
-                UPDATE execution_logs 
+                UPDATE execution_logs
                 SET pnl_usd = ?, exit_price = ?, closed_at = ?
                 WHERE ticker = ? AND closed_at IS NULL
                 AND id = (SELECT MAX(id) FROM execution_logs WHERE ticker = ? AND closed_at IS NULL)
                 """,
-                (round(pnl_usd, 2), round(exit_price, 2), closed_at, symbol, symbol)
+                (round(pnl_usd, 2), round(exit_price, 2), closed_at, symbol, symbol),
             )
             await db.commit()
     except Exception as e:
         logger.error(f"💥 [Telemetry_Write_Error] Failed to register close for {symbol}: {e}")
+
 
 async def run_position_monitor():
     """
@@ -75,14 +79,14 @@ async def run_position_monitor():
     automatic TP/SL triggers at the broker.
     """
     from alpaca.trading.client import TradingClient
-    from alpaca.trading.requests import GetOrdersRequest
     from alpaca.trading.enums import QueryOrderStatus
-    
+    from alpaca.trading.requests import GetOrdersRequest
+
     settings = get_orchestrator_settings()
     client = TradingClient(
         api_key=settings.alpaca_api_key.get_secret_value(),
         secret_key=settings.alpaca_secret_key.get_secret_value(),
-        paper=settings.alpaca_paper
+        paper=settings.alpaca_paper,
     )
 
     await init_monitor_bus()
@@ -114,11 +118,13 @@ async def run_position_monitor():
                 # 🔧 SRE FIX: Protection against empty signals (Alpaca API Latency)
                 req = GetOrdersRequest(status=QueryOrderStatus.CLOSED, symbols=[symbol], limit=1)
                 orders = await loop.run_in_executor(None, client.get_orders, req)
-                
+
                 if orders and float(orders[0].filled_avg_price) > 0:
                     exit_price = float(orders[0].filled_avg_price)
                 else:
-                    exit_price = float(old_p.current_price) # Fallback if no closed order is available yet
+                    exit_price = float(
+                        old_p.current_price
+                    )  # Fallback if no closed order is available yet
                 entry_price = float(old_p.avg_entry_price)
                 qty = float(old_p.qty)
 
@@ -144,13 +150,16 @@ async def run_position_monitor():
             for symbol in new_symbols:
                 p = current_positions[symbol]
                 logger.info(f"🆕 [Opened] New load detected: {symbol}")
-                await send_trade_alert(f"📈 *NEW POSITION* — {symbol}\nQty: `{p.qty}` @ `${p.avg_entry_price}`")
+                await send_trade_alert(
+                    f"📈 *NEW POSITION* — {symbol}\nQty: `{p.qty}` @ `${p.avg_entry_price}`"
+                )
 
             prev_positions = current_positions
 
         except Exception as e:
             logger.error(f"🚨 [Monitor_Runtime_Fault] Error in sensor cycle: {e}")
             await asyncio.sleep(10)
+
 
 if __name__ == "__main__":
     try:

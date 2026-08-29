@@ -25,13 +25,12 @@ Available backtesting modes:
 
 import logging
 import random
-from datetime import datetime, timedelta, timezone
 
 import numpy as np
 import pandas as pd
 import yfinance as yf
 
-from backtesting.metrics import BacktestTrade, BacktestMetrics, calculate_metrics
+from backtesting.metrics import BacktestMetrics, BacktestTrade, calculate_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -40,16 +39,16 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 ATR_PERIOD: int = 14
-SMA_SHORT: int  = 20
-SMA_LONG: int   = 50
+SMA_SHORT: int = 20
+SMA_LONG: int = 50
 
-ATR_STOP_MULT: float   = 1.5   # Stop loss = price - 1.5*ATR
-ATR_TARGET_MULT: float = 4.5   # Take profit = price + 4.5*ATR
+ATR_STOP_MULT: float = 1.5  # Stop loss = price - 1.5*ATR
+ATR_TARGET_MULT: float = 4.5  # Take profit = price + 4.5*ATR
 
-MIN_POP: float        = 0.75
+MIN_POP: float = 0.75
 MIN_ALLOCATION: float = 2_500.0
 VIRTUAL_BALANCE: float = 100_000.0
-KELLY_DIVISOR: float  = 2.0
+KELLY_DIVISOR: float = 2.0
 
 # Maximum number of days to hold a position before closing it (timeout)
 MAX_HOLDING_DAYS: int = 10
@@ -58,6 +57,7 @@ MAX_HOLDING_DAYS: int = 10
 # =============================================================================
 # TECHNICAL INDICATOR CALCULATION (vectorized pandas version)
 # =============================================================================
+
 
 def compute_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -75,13 +75,13 @@ def compute_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
 
     # True Range (for ATR)
-    high  = df["High"]
-    low   = df["Low"]
+    high = df["High"]
+    low = df["Low"]
     close = df["Close"]
 
     tr1 = high - low
     tr2 = (high - close.shift(1)).abs()
-    tr3 = (low  - close.shift(1)).abs()
+    tr3 = (low - close.shift(1)).abs()
     true_range = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
 
     # ATR(14) — Exponential Moving Average of the True Range
@@ -92,7 +92,7 @@ def compute_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df["sma_50"] = close.rolling(SMA_LONG).mean()
 
     # Support and Resistance (same formula as technical.py)
-    df["support"]    = close - ATR_STOP_MULT   * df["atr_14"]
+    df["support"] = close - ATR_STOP_MULT * df["atr_14"]
     df["resistance"] = close + ATR_TARGET_MULT * df["atr_14"]
 
     # Trend signal (True if price is above the moving average)
@@ -111,7 +111,8 @@ def compute_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
     for i in range(len(df)):
         price = df["Close"].iloc[i]
         r = df["atr_pct"].iloc[i] if "atr_pct" in df.columns and "Close" in df.columns else 0.01
-        if r <= 0 or pd.isna(r): r = 0.01
+        if r <= 0 or pd.isna(r):
+            r = 0.01
 
         # Prediction
         x_hat_minus = x_hat
@@ -132,12 +133,13 @@ def compute_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
 # PoP SIMULATOR (replicates _calculate_pop from risk_engine)
 # =============================================================================
 
+
 def simulate_pop(
     price: float,
     sma_20: float,
     support: float,
     resistance: float,
-    confidence: float,    # simulated p (stoch_confidence)
+    confidence: float,  # simulated p (stoch_confidence)
     impact_score: float,  # simulated LLM impact_score
     sentiment: str = "bullish",
 ) -> float:
@@ -185,6 +187,7 @@ def simulate_pop(
 # SINGLE-TRADE SIMULATION
 # =============================================================================
 
+
 def simulate_trade(
     df: pd.DataFrame,
     entry_idx: int,
@@ -204,10 +207,10 @@ def simulate_trade(
     if entry_idx + 1 >= len(df):
         return None
 
-    entry_row  = df.iloc[entry_idx]
+    entry_row = df.iloc[entry_idx]
     entry_date = str(df.index[entry_idx].date())
     entry_price = float(entry_row["Close"])
-    stop_loss   = float(entry_row["support"])
+    stop_loss = float(entry_row["support"])
     take_profit = float(entry_row["resistance"])
 
     if direction == "SHORT":
@@ -221,16 +224,15 @@ def simulate_trade(
     shares = allocation_usd / entry_price
 
     # Simulate the following days until TP, SL, or timeout
-    exit_price  = entry_price
-    exit_date   = entry_date
+    exit_price = entry_price
+    exit_date = entry_date
     exit_reason = "TIMEOUT"
 
     end_idx = min(entry_idx + 1 + MAX_HOLDING_DAYS, len(df))
     for i in range(entry_idx + 1, end_idx):
         row = df.iloc[i]
         day_high = float(row["High"])
-        day_low  = float(row["Low"])
-        day_close = float(row["Close"])
+        day_low = float(row["Low"])
 
         if direction == "LONG":
             if day_high >= take_profit:
@@ -257,7 +259,7 @@ def simulate_trade(
     else:
         # Timeout: close at the last Close of the period
         exit_price = float(df.iloc[end_idx - 1]["Close"])
-        exit_date  = str(df.index[end_idx - 1].date())
+        exit_date = str(df.index[end_idx - 1].date())
 
     # Calculate P&L
     if direction == "LONG":
@@ -268,27 +270,28 @@ def simulate_trade(
     pnl_pct = (pnl_usd / allocation_usd) * 100
 
     return BacktestTrade(
-        ticker         = str(df.columns[0]) if hasattr(df.columns, "__iter__") else "?",
-        entry_date     = entry_date,
-        exit_date      = exit_date,
-        direction      = direction,
-        entry_price    = entry_price,
-        exit_price     = exit_price,
-        stop_loss      = stop_loss,
-        take_profit    = take_profit,
-        shares         = shares,
-        allocation_usd = allocation_usd,
-        pnl_usd        = pnl_usd,
-        pnl_pct        = pnl_pct,
-        exit_reason    = exit_reason,
-        pop_score      = pop_score,
-        kelly_frac     = kelly_frac,
+        ticker=str(df.columns[0]) if hasattr(df.columns, "__iter__") else "?",
+        entry_date=entry_date,
+        exit_date=exit_date,
+        direction=direction,
+        entry_price=entry_price,
+        exit_price=exit_price,
+        stop_loss=stop_loss,
+        take_profit=take_profit,
+        shares=shares,
+        allocation_usd=allocation_usd,
+        pnl_usd=pnl_usd,
+        pnl_pct=pnl_pct,
+        exit_reason=exit_reason,
+        pop_score=pop_score,
+        kelly_frac=kelly_frac,
     )
 
 
 # =============================================================================
 # MAIN BACKTESTING ENGINE
 # =============================================================================
+
 
 class SIGINTBacktester:
     """
@@ -304,30 +307,32 @@ class SIGINTBacktester:
     def __init__(
         self,
         tickers: list[str],
-        period: str = "2y",        # Historical period: "1y", "2y", "5y"
+        period: str = "2y",  # Historical period: "1y", "2y", "5y"
         sentiment_split: float = 0.6,  # % of signals that are bullish vs bearish
-        p_mean: float = 0.65,      # Mean of the stoch_confidence distribution
-        p_std: float = 0.15,       # Standard deviation of stoch_confidence
-        impact_mean: float = 0.45, # Mean of the simulated impact_score
+        p_mean: float = 0.65,  # Mean of the stoch_confidence distribution
+        p_std: float = 0.15,  # Standard deviation of stoch_confidence
+        impact_mean: float = 0.45,  # Mean of the simulated impact_score
         impact_std: float = 0.25,  # Standard deviation of impact_score
         entry_frequency: str = "weekly",  # "daily" | "weekly" | "biweekly"
         seed: int = 42,
-        min_pop_filter: float = MIN_POP, # Allows ignoring it to generate a Machine Learning dataset
+        min_pop_filter: float = MIN_POP,  # Allows ignoring it to generate a Machine Learning dataset
     ) -> None:
-        self.tickers        = tickers
-        self.period         = period
+        self.tickers = tickers
+        self.period = period
         self.sentiment_split = sentiment_split
-        self.p_mean         = p_mean
-        self.p_std          = p_std
-        self.impact_mean    = impact_mean
-        self.impact_std     = impact_std
+        self.p_mean = p_mean
+        self.p_std = p_std
+        self.impact_mean = impact_mean
+        self.impact_std = impact_std
         self.entry_frequency = entry_frequency
-        self.seed           = seed
+        self.seed = seed
         self.min_pop_filter = min_pop_filter
         random.seed(seed)
         np.random.seed(seed)
 
-    def _download_ohlcv(self, ticker: str, spy_df: pd.DataFrame | None = None, vix_df: pd.DataFrame | None = None) -> pd.DataFrame | None:
+    def _download_ohlcv(
+        self, ticker: str, spy_df: pd.DataFrame | None = None, vix_df: pd.DataFrame | None = None
+    ) -> pd.DataFrame | None:
         """Downloads and prepares the OHLCV data for a ticker, integrating Macro (SPY/VIX)."""
         try:
             df = yf.Ticker(ticker).history(period=self.period, auto_adjust=True)
@@ -355,7 +360,7 @@ class SIGINTBacktester:
                 df = df.join(vix_df[["vix_level"]], how="left")
                 df["vix_level"] = df["vix_level"].ffill()
             else:
-                df["vix_level"] = 15.0 # Default normal value
+                df["vix_level"] = 15.0  # Default normal value
 
             # Compute Market Regime for each row
             regimes = []
@@ -372,7 +377,9 @@ class SIGINTBacktester:
                     regimes.append("RISK_ON")
             df["market_regime"] = regimes
 
-            logger.info("[Backtester][%s] %d days of OHLCV loaded with Quant indicators", ticker, len(df))
+            logger.info(
+                "[Backtester][%s] %d days of OHLCV loaded with Quant indicators", ticker, len(df)
+            )
             return df.dropna()
         except Exception as e:
             logger.error("[Backtester][%s] Error downloading OHLCV: %s", ticker, e)
@@ -421,17 +428,21 @@ class SIGINTBacktester:
 
             for idx in entry_days:
                 row = df.iloc[idx]
-                price      = float(row["Close"])
-                sma_20     = float(row["sma_20"])
-                support    = float(row["support"])
+                price = float(row["Close"])
+                sma_20 = float(row["sma_20"])
+                support = float(row["support"])
                 resistance = float(row["resistance"])
-                atr        = float(row["atr_14"])
+                atr = float(row["atr_14"])
 
                 # Simulate LLM signal with a gaussian distribution
-                p_sim      = float(np.clip(np.random.normal(self.p_mean, self.p_std), 0.3, 0.99))
-                impact_sim = float(np.clip(np.random.normal(self.impact_mean, self.impact_std), -0.9, 0.9))
-                direction  = "LONG" if random.random() < self.sentiment_split else "SHORT"
-                sentiment  = "bullish" if direction == "LONG" else "bearish"
+                p_sim = float(np.clip(np.random.normal(self.p_mean, self.p_std), 0.3, 0.99))
+                impact_sim = float(
+                    np.clip(np.random.normal(self.impact_mean, self.impact_std), -0.9, 0.9)
+                )
+                direction = (
+                    "LONG" if random.random() < self.sentiment_split else "SHORT"  # nosec B311
+                )
+                sentiment = "bullish" if direction == "LONG" else "bearish"
 
                 # Calculate PoP with the same MoE fusion as the Risk Engine
                 pop = simulate_pop(price, sma_20, support, resistance, p_sim, impact_sim, sentiment)
@@ -442,10 +453,10 @@ class SIGINTBacktester:
 
                 # Fractional Kelly
                 if direction == "LONG":
-                    risk_usd   = price - support
+                    risk_usd = price - support
                     reward_usd = resistance - price
                 else:
-                    risk_usd   = resistance - price
+                    risk_usd = resistance - price
                     reward_usd = price - support
 
                 if risk_usd <= 0 or reward_usd <= 0:
@@ -460,7 +471,7 @@ class SIGINTBacktester:
                     if self.min_pop_filter > 0.0:
                         continue
                     else:
-                        allocation = MIN_ALLOCATION # Force execution for ML label collection
+                        allocation = MIN_ALLOCATION  # Force execution for ML label collection
                         kelly_frac = MIN_ALLOCATION / VIRTUAL_BALANCE
 
                 trade = simulate_trade(df, idx, direction, allocation, kelly_frac, pop)
@@ -469,15 +480,15 @@ class SIGINTBacktester:
 
                     # Generate Market Features (T0) for Meta-Labeling
                     kalman = float(row.get("kalman_price", price))
-                    vix    = float(row.get("vix_level", 15.0))
+                    vix = float(row.get("vix_level", 15.0))
                     regime = str(row.get("market_regime", "RISK_ON"))
-                    atr_p  = float(row.get("atr_pct", atr/price))
+                    atr_p = float(row.get("atr_pct", atr / price))
 
                     # Basic One-Hot encoding for Regime
                     is_risk_on = 1.0 if regime == "RISK_ON" else 0.0
-                    is_bear    = 1.0 if regime == "RISK_OFF_BEAR" else 0.0
-                    is_vol     = 1.0 if regime == "RISK_OFF_VOLATILE" else 0.0
-                    is_long    = 1.0 if direction == "LONG" else 0.0
+                    is_bear = 1.0 if regime == "RISK_OFF_BEAR" else 0.0
+                    is_vol = 1.0 if regime == "RISK_OFF_VOLATILE" else 0.0
+                    is_long = 1.0 if direction == "LONG" else 0.0
 
                     features = {
                         "vix_level": vix,
@@ -518,13 +529,8 @@ class SIGINTBacktester:
             entry_days = self._select_entry_days(df)
 
             for idx in entry_days:
-                row = df.iloc[idx]
-                price    = float(row["Close"])
-                support  = float(row["support"])
-                resistance = float(row["resistance"])
-
                 # BASELINE: no filter, fixed allocation of 5% of capital
-                direction  = "LONG" if random.random() < 0.5 else "SHORT"
+                direction = "LONG" if random.random() < 0.5 else "SHORT"  # nosec B311
                 allocation = VIRTUAL_BALANCE * 0.05  # fixed 5%, no Kelly
 
                 trade = simulate_trade(df, idx, direction, allocation, 0.05, 0.5)

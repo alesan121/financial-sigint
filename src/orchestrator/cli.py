@@ -12,8 +12,9 @@ import logging
 import re
 import sys
 import uuid
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
+
+from orchestrator.graph import run_trading_cycle
 
 # 🛰️ PATCH: Rich for high-fidelity visual output
 _RICH_AVAILABLE = False
@@ -21,16 +22,12 @@ try:
     from rich.console import Console
     from rich.panel import Panel
     from rich.table import Table
-    from rich.live import Live
 
     # Calibration for modern terminals (avoids encoding noise on Windows)
-    _console: Optional[Console] = Console(force_terminal=True, legacy_windows=False)
+    _console: Console | None = Console(force_terminal=True, legacy_windows=False)
     _RICH_AVAILABLE = True
 except ImportError:
     _console = None
-
-from orchestrator.graph import run_trading_cycle
-from orchestrator.core.config import get_orchestrator_settings
 
 # Silence external library noise to keep the log bus clean
 logging.basicConfig(level=logging.WARNING, format="%(message)s")
@@ -42,9 +39,11 @@ DEFAULT_NEWS = (
     "surpassing analyst expectations by 20%. The stock is up 5% in after-hours trading."
 )
 
+
 def _strip_markup(text: str) -> str:
     """Signal cleanup filter."""
     return re.sub(r"\[/?[^\]]*\]", "", text)
+
 
 def _print_state(state: dict, thread_id: str) -> None:
     """
@@ -67,7 +66,11 @@ def _print_state(state: dict, thread_id: str) -> None:
     action = exec_p.get("action", risk.get("routing_flag", "PENDING"))
 
     # Color logic for the front panel
-    color = "green" if action in ("APPROVED", "LONG", "EXECUTED") else "red" if action == "REJECTED" else "yellow"
+    color = (
+        "green"
+        if action in ("APPROVED", "LONG", "EXECUTED")
+        else "red" if action == "REJECTED" else "yellow"
+    )
     port_color = "green" if port_status == "PASS" else "red" if port_status != "N/A" else "white"
 
     if _RICH_AVAILABLE and _console is not None:
@@ -80,7 +83,9 @@ def _print_state(state: dict, thread_id: str) -> None:
         table.add_row("[dim]SYS:[/dim] Retries", str(retry_count))
 
         # --- CHANNEL 1: INGRESS ---
-        table.add_row("[dim]ING:[/dim] Ticker ID", f"[bold white]{ingress.get('ticker', 'N/A')}[/bold white]")
+        table.add_row(
+            "[dim]ING:[/dim] Ticker ID", f"[bold white]{ingress.get('ticker', 'N/A')}[/bold white]"
+        )
         table.add_row("[dim]ING:[/dim] Sentiment", str(ingress.get("sentiment", "N/A")))
         table.add_row("[dim]ING:[/dim] SNR (Conf)", f"{ingress.get('stoch_confidence', 0.0):.2f}")
 
@@ -92,11 +97,15 @@ def _print_state(state: dict, thread_id: str) -> None:
         table.add_row("[dim]RSK:[/dim] Allocation", f"${risk.get('allocation_usd', 0.0):,.2f}")
 
         # --- CHANNEL 3: EXECUTION ---
-        table.add_row("[bold]PORT:[/bold] Guard", f"[bold {port_color}]{port_status}[/bold {port_color}]")
+        table.add_row(
+            "[bold]PORT:[/bold] Guard", f"[bold {port_color}]{port_status}[/bold {port_color}]"
+        )
         table.add_row("[bold]FINAL:[/bold] ACTION", f"[bold {color}]{action}[/bold {color}]")
 
         _console.print()
-        _console.print(Panel(table, title="[bold]FSM REGISTER READOUT v4.0[/bold]", border_style="blue"))
+        _console.print(
+            Panel(table, title="[bold]FSM REGISTER READOUT v4.0[/bold]", border_style="blue")
+        )
 
         # Node Audit (Audit Trail / Plant Logs)
         _console.print("\n[bold]Audit Trail (Component Sequence):[/bold]")
@@ -105,31 +114,32 @@ def _print_state(state: dict, thread_id: str) -> None:
         _console.print()
     else:
         # Fallback for terminals without ANSI support (Plain Text Mode)
-        print("\n" + "="*60)
+        print("\n" + "=" * 60)
         print(f"  FSM RESULT - BUS: {thread_id} | REGIME: {market_regime}")
-        print("="*60)
+        print("=" * 60)
         print(f"  Ticker    : {ingress.get('ticker')}")
         print(f"  Sentiment : {ingress.get('sentiment')}")
         print(f"  VIX/Kalman: {vix_level:.2f} / ${kalman_p:.2f}")
         print(f"  Action    : {action}")
-        print("="*60)
+        print("=" * 60)
+
 
 async def main(news_text: str) -> None:
     """CLI Ignition Sequence."""
-    ts = datetime.now(timezone.utc).isoformat()
+    ts = datetime.now(UTC).isoformat()
     # Generate a unique identifier for this test 'pulse'
     thread_id = f"CLI-{uuid.uuid4().hex[:6].upper()}"
 
     if _RICH_AVAILABLE and _console:
         _console.print(f"\n[bold blue]{'='*70}[/bold blue]")
-        _console.print(f"🚀 [bold]FINANCIAL SIGINT[/bold] | DEFCON 1 Diagnostics Terminal")
+        _console.print("🚀 [bold]FINANCIAL SIGINT[/bold] | DEFCON 1 Diagnostics Terminal")
         _console.print(f"[bold blue]{'='*70}[/bold blue]\n")
         _console.print(f"[yellow]Trigger Time :[/yellow] {ts}")
         _console.print(f"[yellow]Signal ID    :[/yellow] {thread_id}")
 
     preview = news_text[:120] + "..." if len(news_text) > 120 else news_text
     if _console:
-        _console.print(f"\n[bold]Injecting Signal:[/bold] [italic]\"{preview}\"[/italic]\n")
+        _console.print(f'\n[bold]Injecting Signal:[/bold] [italic]"{preview}"[/italic]\n')
         _console.print("[bold cyan]>> Processing in the LangGraph Backplane...[/bold cyan]")
 
     try:
@@ -143,12 +153,15 @@ async def main(news_text: str) -> None:
             print(f"Error: {e}")
         sys.exit(1)
 
+
 def _parse_args() -> str:
     import argparse
+
     parser = argparse.ArgumentParser(description="SIGINT CLI Terminal")
     parser.add_argument("--news", type=str, help="News text to inject")
     args = parser.parse_args()
     return args.news if args.news else DEFAULT_NEWS
+
 
 if __name__ == "__main__":
     try:

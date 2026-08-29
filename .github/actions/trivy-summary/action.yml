@@ -1,0 +1,119 @@
+name: Trivy Summary
+description: >
+  Writes Trivy vulnerability and secret scan results to the workflow log and
+  GitHub Step Summary. Works with both filesystem (fs) and image scan outputs.
+
+inputs:
+  results-path:
+    description: Path to the Trivy JSON results file (e.g. trivy-results.json).
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Write Trivy results to workflow summary
+      shell: bash
+      env:
+        RESULTS: ${{ inputs.results-path }}
+      run: |
+        declare -A ICONS=(["CRITICAL"]="🔴" ["HIGH"]="🟠" ["MEDIUM"]="🟡" ["LOW"]="🔵" ["UNKNOWN"]="⚪")
+        SEVERITY_ORDER=(CRITICAL HIGH MEDIUM LOW UNKNOWN)
+
+        if [[ ! -f "$RESULTS" ]]; then
+          echo "trivy-results.json not found — Trivy may have failed to run"
+          exit 0
+        fi
+
+        ARTIFACT=$(jq -r '.ArtifactName // "unknown"' "$RESULTS")
+        VULN_TOTAL=$(jq '[.Results[] | .Vulnerabilities // [] | .[]] | length' "$RESULTS")
+        SECRET_TOTAL=$(jq '[.Results[] | select(.Class == "secret") | .Secrets // [] | .[]] | length' "$RESULTS")
+        TOTAL=$((VULN_TOTAL + SECRET_TOTAL))
+
+        # ------------------------- stdout (visible in workflow logs) -------------------------
+        if [[ "$TOTAL" -eq 0 ]]; then
+          echo "Trivy: no findings in ${ARTIFACT}"
+        else
+          echo "Trivy found ${TOTAL} finding(s) in ${ARTIFACT} (${VULN_TOTAL} vulnerabilities, ${SECRET_TOTAL} secrets)"
+          echo ""
+
+          if [[ "$VULN_TOTAL" -gt 0 ]]; then
+            echo "-- Vulnerabilities --"
+            printf "%-10s %-22s %-25s %-15s %-15s %s\n" "Severity" "CVE" "Package" "Installed" "Fixed" "Title"
+            printf '%0.s-' {1..100}; echo ""
+            for SEV in "${SEVERITY_ORDER[@]}"; do
+              while IFS=$'\t' read -r sev cve pkg inst fixed title; do
+                printf "%-10s %-22s %-25s %-15s %-15s %s\n" "$sev" "$cve" "$pkg" "$inst" "$fixed" "$title"
+              done < <(jq -r --arg s "$SEV" '
+                .Results[] | .Vulnerabilities // [] | .[] | select(.Severity == $s) |
+                [.Severity, .VulnerabilityID, .PkgName, .InstalledVersion,
+                 (.FixedVersion // "N/A"), (.Title // .Description // "" | .[0:60])] | @tsv
+              ' "$RESULTS")
+            done
+          fi
+
+          if [[ "$SECRET_TOTAL" -gt 0 ]]; then
+            echo ""
+            echo "-- Secrets --"
+            printf "%-10s %-45s %-25s %s\n" "Severity" "File" "Rule" "Title"
+            printf '%0.s-' {1..100}; echo ""
+            while IFS=$'\t' read -r sev target rule title; do
+              printf "%-10s %-45s %-25s %s\n" "$sev" "${target: -45}" "$rule" "$title"
+            done < <(jq -r '
+              .Results[] | select(.Class == "secret") |
+              .Target as $target |
+              .Secrets[] |
+              [.Severity, $target, .RuleID, .Title] | @tsv
+            ' "$RESULTS")
+          fi
+        fi
+
+        # ------------------- GitHub Step Summary (Markdown) ----------------------
+        [[ -z "${GITHUB_STEP_SUMMARY:-}" ]] && exit 0
+
+        {
+          if [[ "$TOTAL" -eq 0 ]]; then
+            echo "## ✅ Trivy: No findings"
+            echo ""
+            echo "> Artifact: \`${ARTIFACT}\`"
+          else
+            [[ "$TOTAL" -eq 1 ]] && LABEL="finding" || LABEL="findings"
+            echo "## ⚠️ Trivy: ${TOTAL} ${LABEL} (${VULN_TOTAL} vulnerabilities, ${SECRET_TOTAL} secrets)"
+            echo ""
+            echo "> Artifact: \`${ARTIFACT}\`"
+            echo ""
+
+            if [[ "$VULN_TOTAL" -gt 0 ]]; then
+              echo "### 🛡️ Vulnerabilities"
+              echo ""
+              for SEV in "${SEVERITY_ORDER[@]}"; do
+                COUNT=$(jq -r --arg s "$SEV" \
+                  '[.Results[] | .Vulnerabilities // [] | .[] | select(.Severity == $s)] | length' \
+                  "$RESULTS")
+                [[ "$COUNT" -eq 0 ]] && continue
+                echo "#### ${ICONS[$SEV]} ${SEV} (${COUNT})"
+                echo ""
+                echo "| CVE | Package | Installed | Fixed | Description |"
+                echo "|-----|---------|-----------|-------|-------------|"
+                jq -r --arg s "$SEV" '
+                  .Results[] | .Vulnerabilities // [] | .[] | select(.Severity == $s) |
+                  "| [\(.VulnerabilityID)](https://avd.aquasec.com/nvd/\(.VulnerabilityID | ascii_downcase)) | `\(.PkgName)` | \(.InstalledVersion) | \(.FixedVersion // "N/A") | \(.Title // .Description // "" | .[0:100]) |"
+                ' "$RESULTS"
+                echo ""
+              done
+            fi
+
+            if [[ "$SECRET_TOTAL" -gt 0 ]]; then
+              echo "### 🔑 Secrets (${SECRET_TOTAL})"
+              echo ""
+              echo "| Severity | File | Rule | Title |"
+              echo "|----------|------|------|-------|"
+              jq -r '
+                .Results[] | select(.Class == "secret") |
+                .Target as $target |
+                .Secrets[] |
+                "| \(.Severity) | `\($target)` | \(.RuleID) | \(.Title) |"
+              ' "$RESULTS"
+              echo ""
+            fi
+          fi
+        } >> "$GITHUB_STEP_SUMMARY"

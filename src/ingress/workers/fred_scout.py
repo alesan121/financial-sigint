@@ -30,7 +30,7 @@ import asyncio
 import hashlib
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import aiosqlite
 import httpx
@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 INGRESS_URL: str = os.getenv("INGRESS_URL", "http://ingress:8000/analyze")
-DB_PATH: str     = os.getenv("SCOUT_DB_PATH", "/data/scout_seen.db")
+DB_PATH: str = os.getenv("SCOUT_DB_PATH", "/data/scout_seen.db")
 FRED_API_KEY: str = os.getenv("FRED_API_KEY", "")
 FRED_BASE_URL: str = "https://api.stlouisfed.org/fred/series/observations"
 ORCHESTRATOR_URL: str = os.getenv("ORCHESTRATOR_URL", "http://orchestrator:8001/trigger")
@@ -133,6 +133,7 @@ _MACRO_SERIES: list[tuple[str, str, str, str, str]] = [
 # DEDUPLICATOR
 # =============================================================================
 
+
 async def _ensure_db(conn: aiosqlite.Connection) -> None:
     await conn.execute(
         "CREATE TABLE IF NOT EXISTS seen_signals "
@@ -150,13 +151,15 @@ async def _is_seen(conn: aiosqlite.Connection, h: str) -> bool:
 async def _mark_seen(conn: aiosqlite.Connection, h: str, src: str) -> None:
     await conn.execute(
         "INSERT OR IGNORE INTO seen_signals (hash, source, seen_at) VALUES (?,?,?)",
-        (h, src, datetime.now(timezone.utc).isoformat()),
+        (h, src, datetime.now(UTC).isoformat()),
     )
     await conn.commit()
+
 
 # =============================================================================
 # ACQUISITION: FRED API
 # =============================================================================
+
 
 async def _fetch_latest_fred_value(
     client: httpx.AsyncClient, series_id: str
@@ -168,10 +171,10 @@ async def _fetch_latest_fred_value(
     The FRED API requires an API key or allows limited anonymous access.
     """
     params: dict = {
-        "series_id":       series_id,
-        "sort_order":      "desc",
-        "limit":           "2",          # Last 2 values to calculate the delta
-        "file_type":       "json",
+        "series_id": series_id,
+        "sort_order": "desc",
+        "limit": "2",  # Last 2 values to calculate the delta
+        "file_type": "json",
         "observation_start": "2020-01-01",
     }
     if FRED_API_KEY:
@@ -219,9 +222,11 @@ def _format_macro_signal(
     h = hashlib.sha256(f"fred:{series_id}:{date}:{value}".encode()).hexdigest()
     return text, h
 
+
 # =============================================================================
 # MAIN CYCLE
 # =============================================================================
+
 
 async def _scan_once(client: httpx.AsyncClient, conn: aiosqlite.Connection) -> None:
     """Queries all FRED series and dispatches new readings."""
@@ -242,7 +247,10 @@ async def _scan_once(client: httpx.AsyncClient, conn: aiosqlite.Connection) -> N
 
         logger.info(
             "[FREDScout] 📊 NEW DATA: %s | %s: %.3f %s → Dispatching...",
-            series_id, date, value, unit,
+            series_id,
+            date,
+            value,
+            unit,
         )
 
         try:
@@ -250,8 +258,8 @@ async def _scan_once(client: httpx.AsyncClient, conn: aiosqlite.Connection) -> N
                 INGRESS_URL,
                 json={
                     "ticker": f"MACRO:{series_id}",
-                    "text": text, 
-                    "source": f"FRED / Federal Reserve — {series_id}"
+                    "text": text,
+                    "source": f"FRED / Federal Reserve — {series_id}",
                 },
                 timeout=1200.0,
             )
@@ -259,20 +267,21 @@ async def _scan_once(client: httpx.AsyncClient, conn: aiosqlite.Connection) -> N
             sig = resp.json()
             await _mark_seen(conn, h, f"fred:{series_id}")
             dispatched += 1
-            
+
             # ─── END-TO-END LOOP: Invoke DSP Orchestrator ────────────────────
             # Structured Bus injection (avoids re-inference)
             try:
                 logger.info("[FREDScout] ⚡ Invoking DSP Orchestrator for %s...", name)
-                trigger_payload = {
-                     "ingress_signal": sig,
-                     "news_text": text
-                }
-                trigger_res = await client.post(ORCHESTRATOR_URL, json=trigger_payload, timeout=15.0)
+                trigger_payload = {"ingress_signal": sig, "news_text": text}
+                trigger_res = await client.post(
+                    ORCHESTRATOR_URL, json=trigger_payload, timeout=15.0
+                )
                 trigger_res.raise_for_status()
                 logger.info("[FREDScout] ✅ FSM Cycle Queued.")
             except Exception as e:
-                logger.error("[FREDScout] 🔥 DSP ERROR: Failed to communicate with Orchestrator: %s", e)
+                logger.error(
+                    "[FREDScout] 🔥 DSP ERROR: Failed to communicate with Orchestrator: %s", e
+                )
 
         except Exception as e:
             logger.error("[FREDScout][%s] ❌ Dispatch error: %s", series_id, e)
@@ -289,8 +298,7 @@ async def main() -> None:
         format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
     )
     logger.info(
-        "=== SIGINT FRED Scout v1.0 ===\n"
-        "Series: %d | API Key: %s | Interval: %ds",
+        "=== SIGINT FRED Scout v1.0 ===\n" "Series: %d | API Key: %s | Interval: %ds",
         len(_MACRO_SERIES),
         "✅ Configured" if FRED_API_KEY else "⚠️ Anonymous (limited)",
         POLL_INTERVAL_SECONDS,
@@ -309,13 +317,19 @@ async def main() -> None:
             logger.info("[FREDScout] === Cycle #%d ===", cycle)
 
             # 🔌 SRE FIX: Fresh HTTP client on each cycle (avoids TCP RST)
-            async with httpx.AsyncClient(headers={"User-Agent": "SIGINT-FREDScout/1.0"}, timeout=300.0) as client:
+            async with httpx.AsyncClient(
+                headers={"User-Agent": "SIGINT-FREDScout/1.0"}, timeout=300.0
+            ) as client:
                 try:
                     await _scan_once(client, conn)
                 except Exception as e:
                     logger.error("[FREDScout] Unexpected error: %s", e, exc_info=True)
 
-            logger.info("[FREDScout] 💤 Next cycle in %ds (%dh)", POLL_INTERVAL_SECONDS, POLL_INTERVAL_SECONDS // 3600)
+            logger.info(
+                "[FREDScout] 💤 Next cycle in %ds (%dh)",
+                POLL_INTERVAL_SECONDS,
+                POLL_INTERVAL_SECONDS // 3600,
+            )
             await asyncio.sleep(POLL_INTERVAL_SECONDS)
 
 

@@ -8,18 +8,20 @@ frequency based on the price to keep the fuses operational.
 """
 
 import logging
-import math
-from typing import Tuple
-from orchestrator.state import TradingState, RiskQuant
+
 from orchestrator.core.config import get_orchestrator_settings
 from orchestrator.core.telemetry import node_telemetry as trace_node
+from orchestrator.state import TradingState
 
 logger = logging.getLogger(__name__)
 
 # --- EEPROM LOADING (Global Configuration) ---
 settings = get_orchestrator_settings()
 
-def calculate_dynamic_safety(price: float, atr: float, sentiment: str) -> Tuple[float, float, float]:
+
+def calculate_dynamic_safety(
+    price: float, atr: float, sentiment: str
+) -> tuple[float, float, float]:
     """
     Fuse Calculation (SL/TP) with 'Limp-Home' mode (Graceful Degradation).
     """
@@ -33,12 +35,12 @@ def calculate_dynamic_safety(price: float, atr: float, sentiment: str) -> Tuple[
     # The 2.0x ATR multiplier is the industrial protection standard
     stop_dist = safe_atr * 2.0
 
-    if sentiment == "bearish": # Short case (NVIDIA Bearish Test)
+    if sentiment == "bearish":  # Short case (NVIDIA Bearish Test)
         sl = price + stop_dist
         tp = price - (stop_dist * 2.5)
         # 🛡️ SRE PROTECTION: SL can never be less than 10 cents from the price
         sl = max(sl, price + 0.10)
-    else: # Long case (bullish)
+    else:  # Long case (bullish)
         sl = price - stop_dist
         tp = price + (stop_dist * 2.5)
         # 🛡️ SRE PROTECTION: SL can never be less than 10 cents from the price
@@ -50,7 +52,8 @@ def calculate_dynamic_safety(price: float, atr: float, sentiment: str) -> Tuple[
 
     return round(sl, 2), round(tp, 2), round(rr_ratio, 2)
 
-def _calculate_pop(p: float, impact_score: float, **kwargs) -> Tuple[float, str]:
+
+def _calculate_pop(p: float, impact_score: float, **kwargs) -> tuple[float, str]:
     """
     Probability of Profit (PoP) Calculator.
     Fuses sensor confidence (STOCH) with the impact of the message.
@@ -60,21 +63,31 @@ def _calculate_pop(p: float, impact_score: float, **kwargs) -> Tuple[float, str]
     pop = (p * 0.7) + (adj_impact * 0.3)
     return round(pop, 4), "PoP Fusion Successful"
 
-def _compute_real_kelly(p: float, current_price: float, support: float, resistance: float,
-                        sentiment: str, market_regime: str) -> Tuple[float, float, str]:
+
+def _compute_real_kelly(
+    p: float,
+    current_price: float,
+    support: float,
+    resistance: float,
+    sentiment: str,
+    market_regime: str,
+) -> tuple[float, float, str]:
     """
     Precision Kelly Engine with Closed-Loop Attenuator.
     """
-    if current_price <= 0: return 0.0, 0.0, "Zero Price"
+    if current_price <= 0:
+        return 0.0, 0.0, "Zero Price"
 
     # Compute the gain (b) based on distance to technical levels
     if sentiment == "bullish":
         risk = abs(current_price - support) if support > 0 else current_price * 0.02
-        reward = abs(resistance - current_price) if resistance > current_price else current_price * 0.04
+        reward = (
+            abs(resistance - current_price) if resistance > current_price else current_price * 0.04
+        )
     else:
         risk = abs(resistance - current_price) if resistance > 0 else current_price * 0.02
         reward = abs(current_price - support) if support < current_price else current_price * 0.04
-        
+
     b = reward / risk if risk > 0 else 1.0
 
     # Master formula: f = (bp - q) / b
@@ -90,9 +103,10 @@ def _compute_real_kelly(p: float, current_price: float, support: float, resistan
 
     # 3. VIX Penalty (Market noise adjustment)
     if market_regime == "RISK_OFF_VOLATILE":
-        final_f *= 0.5 # Power cut to 50% during panic
+        final_f *= 0.5  # Power cut to 50% during panic
 
     return round(final_f, 4), round(b, 2), "Kelly Calc OK"
+
 
 @trace_node("Risk_Engine")
 async def node_risk_evaluation(state: TradingState) -> dict:

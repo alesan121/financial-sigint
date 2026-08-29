@@ -6,22 +6,18 @@ Hardware analogy: This actuator is a 'Solid-State Relay with Protection Circuit'
 It implements 'Inventory Guard' and 'Radio Squelch' logic to avoid short-circuits.
 """
 
-import logging
-import time
-import re
 import asyncio
-from datetime import datetime, timezone
+import logging
+from datetime import UTC, datetime
 
 from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import OrderClass, OrderSide, TimeInForce
 from alpaca.trading.requests import (
+    GetOrdersRequest,
     MarketOrderRequest,
+    QueryOrderStatus,
     StopLossRequest,
     TakeProfitRequest,
-    TrailingStopOrderRequest,
-    LimitOrderRequest,
-    GetOrdersRequest,
-    QueryOrderStatus,
 )
 
 from orchestrator.core.config import get_orchestrator_settings
@@ -52,21 +48,24 @@ async def node_execution(state: TradingState) -> dict:
     """
     Actuator Node v2.8: SRE Shield - Fix Telegram 400, Inventory Guard, and TP Precision.
     """
-    ts = datetime.now(timezone.utc).isoformat()
-    t0 = time.perf_counter()
+    ts = datetime.now(UTC).isoformat()
 
     # 🔧 SRE FIX: Signal and Risk Resolution
-    signal         = state.get("ingress_signal", {})
-    risk           = state.get("risk_quant", {})
-    
-    ticker         = signal.get("ticker", "UNKNOWN")
-    action         = risk.get("routing_flag", "REJECTED")
-    current_price  = risk.get("current_price", 0.0)
+    signal = state.get("ingress_signal", {})
+    risk = state.get("risk_quant", {})
+
+    ticker = signal.get("ticker", "UNKNOWN")
+    action = risk.get("routing_flag", "REJECTED")
+    current_price = risk.get("current_price", 0.0)
     allocation_usd = risk.get("allocation_usd", 0.0)
-    sentiment      = signal.get("sentiment", "neutral")
-    
+    sentiment = signal.get("sentiment", "neutral")
+
     # Determine the real action (LONG/SHORT)
-    trade_side     = OrderSide.BUY if sentiment == "bullish" else OrderSide.SELL if sentiment == "bearish" else None
+    trade_side = (
+        OrderSide.BUY
+        if sentiment == "bullish"
+        else OrderSide.SELL if sentiment == "bearish" else None
+    )
 
     # 1. 🛡️ SHIELDED NOTIFICATION PROTOCOL (Fix Error 400)
     from orchestrator.workers.notifier import send_trade_alert
@@ -75,15 +74,13 @@ async def node_execution(state: TradingState) -> dict:
         discard_reason = risk.get("discard_reason", "Reason not specified")
         safe_ticker = _clean_for_markdown(ticker)
         safe_reason = _clean_for_markdown(discard_reason)
-        
+
         log_entry = f"[{ts}][node_execution] SKIP | ticker={ticker} | reason={discard_reason}"
         logger.info(log_entry)
-        
+
         try:
             alert = (
-                f"🗑️ *SIGNAL DISCARDED*\n"
-                f"Ticker: `{safe_ticker}`\n"
-                f"Reason: _{safe_reason}_"
+                f"🗑️ *SIGNAL DISCARDED*\n" f"Ticker: `{safe_ticker}`\n" f"Reason: _{safe_reason}_"
             )
             await send_trade_alert(alert, parse_mode="MarkdownV2", disable_notification=True)
         except Exception as notify_err:
@@ -104,12 +101,12 @@ async def node_execution(state: TradingState) -> dict:
         orders_req = GetOrdersRequest(status=QueryOrderStatus.OPEN, symbols=[ticker])
         open_orders = await loop.run_in_executor(None, client.get_orders, orders_req)
         has_pending = len(open_orders) > 0
-        
+
         if has_position or has_pending:
             safe_ticker = _clean_for_markdown(ticker)
             log_entry = f"[{ts}][node_execution] ABORT | Inventory Conflict detected for {ticker}."
             logger.warning(log_entry)
-            
+
             alert = (
                 f"⚠️ *INVENTORY CONFLICT*\n"
                 f"Attention partner, attempted `{trade_side.name}` on `{safe_ticker}` aborted due to an existing position/order\\.\n"
@@ -130,13 +127,13 @@ async def node_execution(state: TradingState) -> dict:
     if trade_side == OrderSide.BUY:
         safe_tp = max(tp_bus, current_price + 0.10)
         safe_sl = min(sl_bus, current_price - 0.10)
-    else: # SELL (Short)
+    else:  # SELL (Short)
         safe_tp = min(tp_bus, current_price - 0.10)
         safe_sl = max(sl_bus, current_price + 0.10)
-        
+
     tp_price = round(safe_tp, 2)
     sl_price = round(safe_sl, 2)
-    
+
     qty = int(allocation_usd / current_price)
     if qty == 0:
         return {"broker_order_id": "ABORTED:QTY_ZERO", "logs": [f"[{ts}] Qty zero for {ticker}"]}
@@ -152,10 +149,10 @@ async def node_execution(state: TradingState) -> dict:
             take_profit=TakeProfitRequest(limit_price=tp_price),
             stop_loss=StopLossRequest(stop_price=sl_price),
         )
-        
+
         order = await loop.run_in_executor(None, client.submit_order, req)
         main_order_id = str(order.id)
-        
+
         safe_ticker = _clean_for_markdown(ticker)
         alert = (
             f"🚀 *ORDER SENT TO MARKET*\n"
@@ -164,16 +161,12 @@ async def node_execution(state: TradingState) -> dict:
             f"TP: `${tp_price:.2f}` \\| SL: `${sl_price:.2f}`"
         )
         await send_trade_alert(alert, parse_mode="MarkdownV2")
-        
+
         log_entry = f"[{ts}][node_execution] ✅ {trade_side.name} {ticker} OK | id={main_order_id}"
         logger.info(log_entry)
-        
-        return {
-            "broker_order_id": main_order_id,
-            "action": trade_side.name,
-            "logs": [log_entry]
-        }
-        
+
+        return {"broker_order_id": main_order_id, "action": trade_side.name, "logs": [log_entry]}
+
     except Exception as e:
         log_err = f"[{ts}][node_execution] ❌ ERROR ALPACA: {str(e)[:100]}"
         logger.error(log_err)

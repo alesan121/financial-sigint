@@ -8,22 +8,28 @@ and RR-Ratio in microseconds before passing the signal on to the Judge.
 """
 
 import logging
-from datetime import datetime, timezone
-from orchestrator.state import TradingState, RiskQuant
-from orchestrator.nodes.risk_engine import _calculate_pop, _compute_real_kelly, calculate_dynamic_safety
+from datetime import UTC, datetime
+
 from orchestrator.core.config import get_orchestrator_settings
 from orchestrator.core.observability import lqa
+from orchestrator.nodes.risk_engine import (
+    _calculate_pop,
+    _compute_real_kelly,
+    calculate_dynamic_safety,
+)
+from orchestrator.state import RiskQuant, TradingState
 
 logger = logging.getLogger(__name__)
 settings = get_orchestrator_settings()
 
+
 async def node_risk_quant_agent(state: TradingState) -> dict:
-    ts = datetime.now(timezone.utc).isoformat()
+    ts = datetime.now(UTC).isoformat()
     signal = state.get("ingress_signal", {})
     ticker = signal.get("ticker", "ERROR")
     sentiment = signal.get("sentiment", "neutral")
     thread_id = state.get("metadata", {}).get("thread_id", "default_bus")
-    
+
     current_risk = state.get("risk_quant", {})
     if "[Manual_Override]" in (current_risk.get("discard_reason") or ""):
         lqa.trace(thread_id, "QUANT", "Manual Passthrough: Bypassing DSP Logic.")
@@ -35,22 +41,24 @@ async def node_risk_quant_agent(state: TradingState) -> dict:
     regime = state.get("market_regime", "RISK_OFF_VOLATILE")
 
     if safe_price <= 0:
-        lqa.trace(thread_id, "QUANT", "🚨 Zero Price detected in Bus. Shutdown.", level=logging.ERROR)
+        lqa.trace(
+            thread_id, "QUANT", "🚨 Zero Price detected in Bus. Shutdown.", level=logging.ERROR
+        )
         pop_score, k_frac, b = 0.0, 0.0, 0.0
     else:
         # ── DSP MATH (No LLM latency) ──
         pop_score, _ = _calculate_pop(
-            p=signal.get("stoch_confidence", 0.0),
-            impact_score=signal.get("impact_score", 0.0)
+            p=signal.get("stoch_confidence", 0.0), impact_score=signal.get("impact_score", 0.0)
         )
         k_frac, b, _ = _compute_real_kelly(
-            p=pop_score, current_price=safe_price, 
+            p=pop_score,
+            current_price=safe_price,
             support=state.get("support", 0.0),
-            resistance=state.get("resistance", 0.0), 
-            sentiment=sentiment, 
-            market_regime=regime
+            resistance=state.get("resistance", 0.0),
+            sentiment=sentiment,
+            market_regime=regime,
         )
-        
+
     allocation = k_frac * settings.virtual_balance_usd
 
     # ── FUSE CALCULATION (SL/TP/RR) ──
@@ -71,7 +79,7 @@ async def node_risk_quant_agent(state: TradingState) -> dict:
         routing_flag = "AMBIGUOUS"
         reason = f"Ambiguous Confidence: {stoch_conf:.2f}"
     elif stoch_conf > 0.80:
-        routing_flag = "APPROVED" # The Judge can still veto later if RR < 1.5
+        routing_flag = "APPROVED"  # The Judge can still veto later if RR < 1.5
         reason = "High SNR Signal - Candidate for Execution"
     else:
         reason = "Low SNR Signal - Discarded"
@@ -90,12 +98,12 @@ async def node_risk_quant_agent(state: TradingState) -> dict:
         "allocation_usd": allocation if routing_flag != "REJECTED" else 0.0,
         "stop_loss": sl,
         "take_profit": tp,
-        "reward_risk_ratio": rr, # 🔌 PIN SYNCED FOR DB AND JUDGE
+        "reward_risk_ratio": rr,  # 🔌 PIN SYNCED FOR DB AND JUDGE
         "routing_flag": routing_flag,
-        "discard_reason": reason
+        "discard_reason": reason,
     }
-    
+
     return {
         "risk_quant": updated_risk,
-        "logs": [f"[{ts}][FSM_Quant] DSP Logic Pass. RR={rr:.2f} | Kelly={k_frac*100:.1f}%"]
+        "logs": [f"[{ts}][FSM_Quant] DSP Logic Pass. RR={rr:.2f} | Kelly={k_frac*100:.1f}%"],
     }

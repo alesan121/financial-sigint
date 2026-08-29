@@ -23,7 +23,7 @@ import asyncio
 import hashlib
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import aiosqlite
 import httpx
@@ -64,6 +64,7 @@ HTTP_TIMEOUT: float = 30.0
 # DEDUPLICATOR (SQLite shared with rss-scout)
 # =============================================================================
 
+
 async def _ensure_db(conn: aiosqlite.Connection) -> None:
     """
     Creates the seen-signals table if it doesn't exist.
@@ -92,7 +93,7 @@ async def _mark_seen(conn: aiosqlite.Connection, signal_hash: str, source: str) 
     """Records the signal as processed."""
     await conn.execute(
         "INSERT OR IGNORE INTO seen_signals (hash, source, seen_at) VALUES (?, ?, ?)",
-        (signal_hash, source, datetime.now(timezone.utc).isoformat()),
+        (signal_hash, source, datetime.now(UTC).isoformat()),
     )
     await conn.commit()
 
@@ -100,6 +101,7 @@ async def _mark_seen(conn: aiosqlite.Connection, signal_hash: str, source: str) 
 # =============================================================================
 # ACQUISITION LAYER (Finnhub API)
 # =============================================================================
+
 
 async def _fetch_insider_transactions(client: httpx.AsyncClient, symbol: str) -> list[dict]:
     """
@@ -129,7 +131,9 @@ async def _fetch_insider_transactions(client: httpx.AsyncClient, symbol: str) ->
         data = resp.json()
         return data.get("data", []) or []
     except httpx.HTTPStatusError as e:
-        logger.error("[InsiderScout][%s] Finnhub HTTP error: %s %s", symbol, e.response.status_code, e)
+        logger.error(
+            "[InsiderScout][%s] Finnhub HTTP error: %s %s", symbol, e.response.status_code, e
+        )
         return []
     except Exception as e:
         logger.error("[InsiderScout][%s] Error querying Finnhub: %s", symbol, e)
@@ -149,10 +153,10 @@ def _mock_insider_transactions(symbol: str) -> list[dict]:
             "name": "John Smith",
             "change": 50000,
             "share": 250_000,
-            "transactionCode": "P",        # 'P' = open-market Purchase
+            "transactionCode": "P",  # 'P' = open-market Purchase
             "transactionPrice": 450.0,
-            "value": 22_500_000.0,          # $22.5M massive purchase
-            "filingDate": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+            "value": 22_500_000.0,  # $22.5M massive purchase
+            "filingDate": datetime.now(UTC).strftime("%Y-%m-%d"),
             "symbol": symbol,
         }
     ]
@@ -161,6 +165,7 @@ def _mock_insider_transactions(symbol: str) -> list[dict]:
 # =============================================================================
 # HIGH-CONVICTION FILTER
 # =============================================================================
+
 
 def _is_high_conviction_purchase(tx: dict) -> bool:
     """
@@ -179,15 +184,16 @@ def _is_high_conviction_purchase(tx: dict) -> bool:
     Analogy: this is the receiver's 'signal discriminator'. It only lets through
     the exact modulation code we're looking for.
     """
-    is_purchase   = tx.get("transactionCode") == "P"
-    value         = float(tx.get("value") or 0.0)
-    is_large      = value >= MIN_TRANSACTION_VALUE_USD
+    is_purchase = tx.get("transactionCode") == "P"
+    value = float(tx.get("value") or 0.0)
+    is_large = value >= MIN_TRANSACTION_VALUE_USD
     return is_purchase and is_large
 
 
 # =============================================================================
 # SIGNAL FORMATTER (Analog text for the ADC/Ingress)
 # =============================================================================
+
 
 def _format_signal(tx: dict) -> tuple[str, str]:
     """
@@ -199,12 +205,12 @@ def _format_signal(tx: dict) -> tuple[str, str]:
     Returns:
         Tuple (text: str, signal_hash: str) — the news text and a unique hash.
     """
-    name     = tx.get("name", "Unknown Insider")
-    symbol   = tx.get("symbol", "?")
-    value    = float(tx.get("value") or 0.0)
-    price    = float(tx.get("transactionPrice") or 0.0)
-    shares   = int(tx.get("change") or tx.get("share") or 0)
-    date     = tx.get("filingDate", "unknown date")
+    name = tx.get("name", "Unknown Insider")
+    symbol = tx.get("symbol", "?")
+    value = float(tx.get("value") or 0.0)
+    price = float(tx.get("transactionPrice") or 0.0)
+    shares = int(tx.get("change") or tx.get("share") or 0)
+    date = tx.get("filingDate", "unknown date")
 
     value_m = value / 1_000_000  # Convert to millions for readability
 
@@ -233,6 +239,7 @@ def _format_signal(tx: dict) -> tuple[str, str]:
 # DISPATCHER (POST → FSM Gateway)
 # =============================================================================
 
+
 async def _dispatch_to_ingress(
     client: httpx.AsyncClient,
     text: str,
@@ -247,12 +254,14 @@ async def _dispatch_to_ingress(
 
     payload = {
         "ticker": symbol,
-        "text":   text,
+        "text": text,
         "source": f"SEC Form 4 / Insider Trading — {symbol}",
     }
 
     try:
-        logger.info("[InsiderScout][%s] ⚡ Injecting pulse into FSM Gateway: %s", symbol, ingress_url)
+        logger.info(
+            "[InsiderScout][%s] ⚡ Injecting pulse into FSM Gateway: %s", symbol, ingress_url
+        )
         # Short timeout (10s) because the v4.0 Gateway only enqueues in memory and responds fast
         response = await client.post(
             ingress_url,
@@ -265,14 +274,17 @@ async def _dispatch_to_ingress(
         ack = response.json()
         logger.info(
             "[InsiderScout][%s] ✅ FSM Cycle Queued | thread_id=%s",
-            symbol, ack.get("thread_id", "unknown")
+            symbol,
+            ack.get("thread_id", "unknown"),
         )
         return True
 
     except httpx.TimeoutException:
         logger.error("[InsiderScout][%s] ⏱️ Timeout connecting to the FSM Gateway.", symbol)
     except httpx.HTTPStatusError as e:
-        logger.error("[InsiderScout][%s] HTTP %s from the FSM Gateway: %s", symbol, e.response.status_code, e)
+        logger.error(
+            "[InsiderScout][%s] HTTP %s from the FSM Gateway: %s", symbol, e.response.status_code, e
+        )
     except Exception as e:
         logger.error("[InsiderScout][%s] Critical bus error towards the FSM Gateway: %s", symbol, e)
 
@@ -283,6 +295,7 @@ async def _dispatch_to_ingress(
 # MAIN POLLING CYCLE
 # =============================================================================
 
+
 async def _scan_once(client: httpx.AsyncClient, conn: aiosqlite.Connection) -> dict:
     """
     A complete monitoring cycle: queries every ticker in the watchlist,
@@ -292,10 +305,10 @@ async def _scan_once(client: httpx.AsyncClient, conn: aiosqlite.Connection) -> d
         Dictionary of cycle metrics for logging.
     """
     total_transactions = 0
-    high_conviction    = 0
-    already_seen       = 0
-    dispatched         = 0
-    errors             = 0
+    high_conviction = 0
+    already_seen = 0
+    dispatched = 0
+    errors = 0
 
     for symbol in WATCHLIST:
         logger.debug("[InsiderScout] Querying Form 4: %s", symbol)
@@ -322,7 +335,9 @@ async def _scan_once(client: httpx.AsyncClient, conn: aiosqlite.Connection) -> d
             value_m = float(tx.get("value") or 0.0) / 1_000_000
             logger.info(
                 "[InsiderScout][%s] 🎯 INSIDER PURCHASE DETECTED | %s | $%.1fM | Dispatching to Ingress...",
-                symbol, tx.get("name", "Unknown"), value_m,
+                symbol,
+                tx.get("name", "Unknown"),
+                value_m,
             )
             success = await _dispatch_to_ingress(client, text, symbol)
 
@@ -337,16 +352,17 @@ async def _scan_once(client: httpx.AsyncClient, conn: aiosqlite.Connection) -> d
 
     return {
         "total_transactions": total_transactions,
-        "high_conviction":    high_conviction,
-        "already_seen":       already_seen,
-        "dispatched":         dispatched,
-        "errors":             errors,
+        "high_conviction": high_conviction,
+        "already_seen": already_seen,
+        "dispatched": dispatched,
+        "errors": errors,
     }
 
 
 # =============================================================================
 # MAIN ENTRYPOINT
 # =============================================================================
+
 
 async def main() -> None:
     """
@@ -369,8 +385,10 @@ async def main() -> None:
     logger.info(
         "=== SIGINT Insider Scout v1.0 starting ===\n"
         "Watchlist: %s | MinValue: $%s | Interval: %ss | DB: %s",
-        ", ".join(WATCHLIST), f"{MIN_TRANSACTION_VALUE_USD:,.0f}",
-        POLL_INTERVAL_SECONDS, DB_PATH,
+        ", ".join(WATCHLIST),
+        f"{MIN_TRANSACTION_VALUE_USD:,.0f}",
+        POLL_INTERVAL_SECONDS,
+        DB_PATH,
     )
 
     if not FINNHUB_API_KEY:
@@ -390,7 +408,7 @@ async def main() -> None:
             cycle = 0
             while True:
                 cycle += 1
-                ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+                ts = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S")
                 logger.info("[InsiderScout] === Cycle #%d started (%s) ===", cycle, ts)
 
                 try:
@@ -406,11 +424,14 @@ async def main() -> None:
                         metrics["errors"],
                     )
                 except Exception as e:
-                    logger.error("[InsiderScout] Unexpected error in cycle #%d: %s", cycle, e, exc_info=True)
+                    logger.error(
+                        "[InsiderScout] Unexpected error in cycle #%d: %s", cycle, e, exc_info=True
+                    )
 
                 logger.info(
                     "[InsiderScout] 💤 Next poll in %d seconds (%d min). Waiting...",
-                    POLL_INTERVAL_SECONDS, POLL_INTERVAL_SECONDS // 60,
+                    POLL_INTERVAL_SECONDS,
+                    POLL_INTERVAL_SECONDS // 60,
                 )
                 await asyncio.sleep(POLL_INTERVAL_SECONDS)
 

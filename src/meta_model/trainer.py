@@ -1,21 +1,23 @@
+import logging
 import os
 import sys
-import logging
+
 import joblib
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, classification_report
+from sklearn.model_selection import train_test_split
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from backtesting.engine import SIGINTBacktester
+from backtesting.engine import SIGINTBacktester  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
 # Representative tickers of the global market (Tech, SP500, Macro)
 TRAIN_TICKERS = ["QQQ", "SPY", "AAPL", "MSFT", "NVDA", "GLD", "TLT", "XOM", "JPM", "AMD"]
+
 
 def generate_dataset() -> tuple[pd.DataFrame, pd.Series]:
     logger.info("Generating training dataset via Montecarlo (Backtester)...")
@@ -25,7 +27,7 @@ def generate_dataset() -> tuple[pd.DataFrame, pd.Series]:
         period="5y",
         entry_frequency="daily",
         seed=42,
-        min_pop_filter=0.0, # Remove the base filter to get an unbiased statistical sample of the market
+        min_pop_filter=0.0,  # Remove the base filter to get an unbiased statistical sample of the market
     )
 
     trades, metrics = backtester.run()
@@ -47,6 +49,7 @@ def generate_dataset() -> tuple[pd.DataFrame, pd.Series]:
     logger.info(f"Label Distribution (Win/Loss): \n{y.value_counts()}")
     return df, y
 
+
 def train_model():
     X, y = generate_dataset()
 
@@ -63,20 +66,22 @@ def train_model():
     # Chronological split to avoid Look-ahead bias (Data Leakage)
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
 
-    logger.info(f"Starting Discriminator (Meta-Model) training...")
+    logger.info("Starting Discriminator (Meta-Model) training...")
     model = RandomForestClassifier(
         n_estimators=200,
         max_depth=5,
         min_samples_split=20,
         class_weight="balanced",
         random_state=1337,
-        n_jobs=-1
+        n_jobs=-1,
     )
     model.fit(X_train, y_train)
 
     # OOS Evaluation (Out-of-Sample)
     y_pred = model.predict(X_test)
-    logger.info(f"=== OOS METRICS ===\nAccuracy: {accuracy_score(y_test, y_pred):.2f}\n{classification_report(y_test, y_pred)}")
+    logger.info(
+        f"=== OOS METRICS ===\nAccuracy: {accuracy_score(y_test, y_pred):.2f}\n{classification_report(y_test, y_pred)}"
+    )
 
     # 🔧 SRE FIX: Persistence in a configurable Path for Docker/K8s volumes
     model_dir = os.getenv("MODEL_STORAGE_PATH", os.path.dirname(__file__))
@@ -84,6 +89,7 @@ def train_model():
 
     joblib.dump(model, model_path)
     logger.info(f"💾 AI Firmware (Meta-Model) saved to: {model_path}")
+
 
 if __name__ == "__main__":
     train_model()
