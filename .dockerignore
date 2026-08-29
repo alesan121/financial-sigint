@@ -24,9 +24,13 @@ htmlcov/
 .ruff_cache/
 .mypy_cache/
 
-# Version control
+# Version control and CI/CD
 .git/
 .gitignore
+.github/
+.devcontainer/
+.pre-commit-config.yaml
+charts/
 
 # Documentation
 *.md
