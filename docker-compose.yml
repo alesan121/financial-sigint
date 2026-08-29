@@ -1,0 +1,491 @@
+# =============================================================================
+# docker-compose.yml - Full stack: Ingress ADC + RSS Scout + Insider Scout
+#
+# Topology:
+#  Windows Host → Ollama (native, port 11434)
+#       ↑
+#  host.docker.internal
+#       ↑
+#  [sigint-net] ←→ [orchestrator] ←→ [rss-scout]
+#                        (Port 8001) ←→ [insider-scout]
+#
+# The Scout calls the Orchestrator over Docker's INTERNAL network (http://orchestrator:8001).
+# The Ingress calls Ollama on the Windows HOST (host.docker.internal:11434).
+# =============================================================================
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # Redis SRAM L1: Semantic Cache with RediSearch for the Ingress ADC.
+  # Reduces LLM latency from 40s to <10ms by storing previous reasoning traces.
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis/redis-stack-server:latest
+    container_name: sigint-redis-sram
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - sigint-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      start_period: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # Ingress (ADC): the FastAPI + LLM microservice (CoT + Self-Reflection).
+  # ---------------------------------------------------------------------------
+##  ingress:
+#    build:
+#      context: .
+#      dockerfile: Dockerfile
+#      target: runtime
+#    container_name: sigint-ingress
+#    env_file:
+#      - .env
+#    ports:
+#      - "8000:8000"
+#    environment:
+#      - PYTHONPATH=/app/src
+#      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+#      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2:latest}
+#      - APP_ENV=${APP_ENV:-development}
+#      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+#      - OLLAMA_NUM_THREAD=${OLLAMA_NUM_THREAD:-16}
+#      - OLLAMA_KEEP_ALIVE=${OLLAMA_KEEP_ALIVE:-24h}
+#    extra_hosts:
+#      - "host.docker.internal:host-gateway"
+#    networks:
+#      - sigint-net
+#    healthcheck:
+#      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+#      interval: 30s
+#      timeout: 10s
+#      start_period: 15s
+#      retries: 3
+#    volumes:
+#      - sigint_data:/app/data
+#      - yfinance_cache:/home/appuser/.cache/py-yfinance
+#    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # RSS Scout: the autonomous financial-signal sensor.
+  # ---------------------------------------------------------------------------
+  rss-scout:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: sigint-rss-scout
+    env_file:
+      - .env
+    environment:
+      - PYTHONPATH=/app/src
+      - INGRESS_URL=http://orchestrator:8001/trigger
+      - RSS_FEED_URL=${RSS_FEED_URL:-https://finance.yahoo.com/news/rssindex}
+      - POLL_INTERVAL_SECONDS=${POLL_INTERVAL_SECONDS:-300}
+      - SCOUT_DB_PATH=/data/scout_seen.db
+      - TELEMETRY_DB_PATH=/app/data/telemetry.db
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    volumes:
+      - ./data/scout:/data
+      - ./data/telemetry:/app/data
+    depends_on:
+      orchestrator:
+        condition: service_healthy
+    networks:
+      - sigint-net
+    healthcheck:
+      test: ["CMD-SHELL", "kill -0 1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    command: ["python", "-m", "ingress.workers.rss_scout"]
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Insider Scout: Smart Money sensor (SEC Form 4 via Finnhub).
+  # Detects large open-market buys by C-levels (> $250k)
+  # and dispatches them to the Ingress ADC for LLM analysis (Bull/Bear/Judge).
+  # ---------------------------------------------------------------------------
+  insider-scout:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: sigint-insider-scout
+    env_file:
+      - .env
+    environment:
+      - PYTHONPATH=/app/src
+      - INGRESS_URL=http://orchestrator:8001/trigger
+      - FINNHUB_API_KEY=${FINNHUB_API_KEY:-}
+      - INSIDER_WATCHLIST=${INSIDER_WATCHLIST:-NVDA,AAPL,MSFT,AMZN,TSLA,AMD,META}
+      - INSIDER_POLL_INTERVAL_SECONDS=${INSIDER_POLL_INTERVAL_SECONDS:-900}
+      - INSIDER_MIN_VALUE_USD=${INSIDER_MIN_VALUE_USD:-250000}
+      - SCOUT_DB_PATH=/data/scout_seen.db    # Same SQLite as rss-scout (global dedup)
+      - TELEMETRY_DB_PATH=/app/data/telemetry.db
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    volumes:
+      - ./data/scout:/data
+      - ./data/telemetry:/app/data
+      - yfinance_cache:/home/appuser/.cache/py-yfinance
+    depends_on:
+      orchestrator:
+        condition: service_healthy
+    networks:
+      - sigint-net
+    healthcheck:
+      test: ["CMD-SHELL", "kill -0 1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    command: ["python", "-m", "ingress.workers.insider_scout"]
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Earnings Scout: earnings-catalyst sensor.
+  # Pre-alerts on imminent earnings (T-1) and post-earnings surprises.
+  # ---------------------------------------------------------------------------
+  earnings-scout:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: sigint-earnings-scout
+    env_file:
+      - .env
+    environment:
+      - PYTHONPATH=/app/src
+      - INGRESS_URL=http://orchestrator:8001/trigger
+      - EARNINGS_WATCHLIST=${EARNINGS_WATCHLIST:-AAPL,MSFT,NVDA,GOOGL,AMZN,META,TSLA,AMD,JPM,GS,JNJ,LLY,XOM,NFLX,CRM,PLTR}
+      - EARNINGS_POLL_INTERVAL_SECONDS=${EARNINGS_POLL_INTERVAL_SECONDS:-21600}
+      - EARNINGS_PRE_DAYS=${EARNINGS_PRE_DAYS:-1}
+      - SCOUT_DB_PATH=/data/scout_seen.db
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    volumes:
+      - ./data/scout:/data
+      - ./data/telemetry:/app/data
+      - yfinance_cache:/home/appuser/.cache/py-yfinance
+    depends_on:
+      orchestrator:
+        condition: service_healthy
+    networks:
+      - sigint-net
+    healthcheck:
+      test: ["CMD-SHELL", "kill -0 1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    command: ["python", "-m", "ingress.workers.earnings_scout"]
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # FRED Scout: Macro sensor (Federal Reserve Economic Data — free).
+  # Monitors CPI, NFP, Fed Funds Rate, M2, GDP, Yield Curve in real time.
+  # ---------------------------------------------------------------------------
+  fred-scout:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: sigint-fred-scout
+    env_file:
+      - .env
+    environment:
+      - PYTHONPATH=/app/src
+      - INGRESS_URL=http://orchestrator:8001/trigger
+      - FRED_API_KEY=${FRED_API_KEY:-}
+      - FRED_POLL_INTERVAL_SECONDS=${FRED_POLL_INTERVAL_SECONDS:-14400}
+      - SCOUT_DB_PATH=/data/scout_seen.db
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    volumes:
+      - ./data/scout:/data
+      - ./data/telemetry:/app/data
+    depends_on:
+      orchestrator:
+        condition: service_healthy
+    networks:
+      - sigint-net
+    healthcheck:
+      test: ["CMD-SHELL", "kill -0 1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    command: ["python", "-m", "ingress.workers.fred_scout"]
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Short Interest Scout: Short Squeeze candidate detector.
+  # SI > 15% of float + Short Ratio > 5 days → imminent squeeze alert.
+  # ---------------------------------------------------------------------------
+  short-interest-scout:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: sigint-short-scout
+    env_file:
+      - .env
+    environment:
+      - PYTHONPATH=/app/src
+      - INGRESS_URL=http://orchestrator:8001/trigger
+      - SHORT_WATCHLIST=${SHORT_WATCHLIST:-NVDA,AAPL,MSFT,TSLA,AMZN,META,GOOGL,AMD,PLTR,MRNA,RIVN,LCID,SOFI}
+      - SHORT_POLL_INTERVAL_SECONDS=${SHORT_POLL_INTERVAL_SECONDS:-86400}
+      - SHORT_MIN_FLOAT_PCT=${SHORT_MIN_FLOAT_PCT:-15.0}
+      - SHORT_MIN_RATIO=${SHORT_MIN_RATIO:-5.0}
+      - SCOUT_DB_PATH=/data/scout_seen.db
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    volumes:
+      - ./data/scout:/data
+      - ./data/telemetry:/app/data
+      - yfinance_cache:/home/appuser/.cache/py-yfinance
+    depends_on:
+      orchestrator:
+        condition: service_healthy
+    networks:
+      - sigint-net
+    healthcheck:
+      test: ["CMD-SHELL", "kill -0 1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    command: ["python", "-m", "ingress.workers.short_interest_scout"]
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Options Scout: Unusual Options Flow sensor (smart money).
+  # Detects contracts with Volume/OI > 2x and premium > $50K (institutional money).
+  # ---------------------------------------------------------------------------
+  options-scout:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: sigint-options-scout
+    env_file:
+      - .env
+    environment:
+      - PYTHONPATH=/app/src
+      - INGRESS_URL=http://orchestrator:8001/trigger
+      - OPTIONS_WATCHLIST=${OPTIONS_WATCHLIST:-SPY,QQQ,AAPL,MSFT,NVDA,TSLA,AMZN,META,GOOGL,AMD,JPM,GS,XOM,GLD,TLT,PLTR}
+      - OPTIONS_POLL_INTERVAL_SECONDS=${OPTIONS_POLL_INTERVAL_SECONDS:-7200}
+      - OPTIONS_MIN_VOL_OI=${OPTIONS_MIN_VOL_OI:-2.0}
+      - OPTIONS_MIN_VOLUME=${OPTIONS_MIN_VOLUME:-500}
+      - OPTIONS_MIN_PREMIUM_USD=${OPTIONS_MIN_PREMIUM_USD:-50000}
+      - SCOUT_DB_PATH=/data/scout_seen.db
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    volumes:
+      - ./data/scout:/data
+      - ./data/telemetry:/app/data
+      - yfinance_cache:/home/appuser/.cache/py-yfinance
+    depends_on:
+      orchestrator:
+        condition: service_healthy
+    networks:
+      - sigint-net
+    healthcheck:
+      test: ["CMD-SHELL", "kill -0 1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    command: ["python", "-m", "ingress.workers.options_scout"]
+    restart: unless-stopped
+
+
+  # ---------------------------------------------------------------------------
+  # Orchestrator Gateway (FSM Server): the cyclic decision-and-broker node.
+  # ---------------------------------------------------------------------------
+  orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: sigint-orchestrator-gateway
+    env_file:
+      - .env
+    ports:
+      - "8001:8001"
+    environment:
+      - PYTHONPATH=/app/src
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      - ALPACA_API_KEY=${ALPACA_API_KEY}
+      - ALPACA_SECRET_KEY=${ALPACA_SECRET_KEY}
+      - ALPACA_PAPER=${ALPACA_PAPER:-true}
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - OLLAMA_MODEL_FAST=${OLLAMA_MODEL_FAST:-llama3.2:1b}
+      - OLLAMA_MODEL_PRO=${OLLAMA_MODEL_PRO:-llama3.2:latest}
+      - DRY_RUN_MODE=${DRY_RUN_MODE:-true}
+      - TELEMETRY_DB_PATH=/app/data/telemetry.db
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./data/telemetry:/app/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - sigint-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/docs"]
+      interval: 30s
+      timeout: 10s
+      start_period: 15s
+      retries: 3
+    command: ["python", "-m", "orchestrator.workers.main"]
+    deploy:
+      resources:
+        limits:
+          cpus: '8.0'
+          memory: 8G
+    restart: unless-stopped
+
+  # Streamlit app that shows:
+  #   - Portfolio Status (Alpaca API: equity, positions, P&L)
+  #   - AgentOps Audit (SQLite: last 50 decisions from the DSP)
+  # Access: http://localhost:8501
+  # ---------------------------------------------------------------------------
+  sigint-dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: sigint-dashboard
+    env_file:
+      - .env
+    ports:
+      - "8501:8501"
+    environment:
+      - PYTHONPATH=/app/src
+      - ALPACA_API_KEY=${ALPACA_API_KEY}
+      - ALPACA_SECRET_KEY=${ALPACA_SECRET_KEY}
+      - ALPACA_PAPER=${ALPACA_PAPER:-true}
+      - TELEMETRY_DB_PATH=/app/data/telemetry.db
+      - DASHBOARD_REFRESH_SECS=${DASHBOARD_REFRESH_SECS:-30}
+    volumes:
+      - ./data/telemetry:/app/data
+    depends_on:
+      orchestrator:
+        condition: service_healthy
+    networks:
+      - sigint-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 15s
+      retries: 3
+    command:
+      - "streamlit"
+      - "run"
+      - "src/ui/dashboard.py"
+      - "--server.port=8501"
+      - "--server.address=0.0.0.0"
+      - "--server.headless=true"
+      - "--browser.gatherUsageStats=false"
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Position Monitor: Feedback Loop — tracks positions + real P&L + Telegram
+  # ---------------------------------------------------------------------------
+  position-monitor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: sigint-position-monitor
+    env_file: .env
+    environment:
+      - PYTHONPATH=/app/src
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - TELEMETRY_DB_PATH=/app/data/telemetry.db
+      - MONITOR_POLL_INTERVAL_SECONDS=${MONITOR_POLL_INTERVAL_SECONDS:-60}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+      - ALPACA_API_KEY=${ALPACA_API_KEY}
+      - ALPACA_SECRET_KEY=${ALPACA_SECRET_KEY}
+      - ALPACA_PAPER=${ALPACA_PAPER:-true}
+    volumes:
+      - ./data/telemetry:/app/data
+    depends_on:
+      orchestrator:
+        condition: service_healthy
+    networks:
+      - sigint-net
+    # --- FIX: process-based healthcheck, not HTTP-port based ---
+    healthcheck:
+      test: ["CMD-SHELL", "kill -0 1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    # -------------------------------------------------------------
+    command: python -m orchestrator.workers.position_monitor
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Telegram Bot Listener: the Command Receiver (HITL Reply Bus)
+  # ---------------------------------------------------------------------------
+  telegram-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: sigint-telegram-bot
+    env_file: .env
+    environment:
+      - PYTHONPATH=/app/src
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+    depends_on:
+      orchestrator:
+        condition: service_healthy
+    networks:
+      - sigint-net
+    healthcheck:
+      test: ["CMD-SHELL", "kill -0 1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    command: python -m orchestrator.workers.telegram_bot
+    restart: unless-stopped
+
+# ---------------------------------------------------------------------------
+# Internal network
+# ---------------------------------------------------------------------------
+networks:
+  sigint-net:
+    driver: bridge
+
+# ---------------------------------------------------------------------------
+# Persistent volumes
+# ---------------------------------------------------------------------------
+volumes:
+  scout_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PWD}/data/scout
+  sigint_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PWD}/data/telemetry
+  redis_data:
+    driver: local
+  yfinance_cache:
+    driver: local

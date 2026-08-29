@@ -1,0 +1,18 @@
+repos:
+  - repo: https://github.com/commitizen-tools/commitizen
+    rev: "v4.13.7"
+    hooks:
+      - id: commitizen
+        stages: [commit-msg]
+      - id: commitizen-branch
+        stages: [pre-push]
+        args:
+          - --rev-range
+          - origin/main..HEAD
+
+  - repo: https://github.com/python-poetry/poetry
+    rev: "2.3.2"
+    hooks:
+      - id: poetry-check
+      - id: poetry-lock
+      - id: poetry-install

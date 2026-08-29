@@ -1,0 +1,98 @@
+[tool.poetry]
+name = "sigint-financiero-ingress"
+version = "0.1.0"
+description = "Ingress (ADC) microservice for analyzing the market impact of Nasdaq news using a local LLM (Ollama)."
+authors = ["SIGINT Financiero Team"]
+readme = "README.md"
+packages = [
+    { include = "ingress", from = "src" },
+    { include = "orchestrator", from = "src" },
+]
+
+[tool.poetry.dependencies]
+python = "^3.12"
+fastapi = { version = "^0.115.0", extras = ["standard"] }
+uvicorn = { version = "^0.32.0", extras = ["standard"] }
+langchain = "^0.3.0"
+langchain-ollama = "^0.2.0"
+langchain-core = "^0.3.0"
+langgraph = "^0.3.0"
+httpx = "^0.28.0"
+feedparser = "^6.0.11"
+aiosqlite = "^0.20.0"
+yfinance = "^0.2.50"
+pandas = "^2.2.0"
+alpaca-py = "^0.40.0"
+streamlit = "^1.42.0"
+plotly = "^5.24.0"
+pydantic = "^2.9.0"
+pydantic-settings = "^2.6.0"
+scikit-learn = "^1.8.0"
+joblib = "^1.5.3"
+redis = "^7.2.1"
+prometheus-client = "^0.24.1"
+tenacity = "^9.1.4"
+
+[tool.poetry.group.dev.dependencies]
+ruff = "^0.7.0"
+black = "^24.10.0"
+bandit = { version = "^1.8.0", extras = ["toml"] }
+flake8 = "^7.0.0"
+pyproject-flake8 = "^7.0.0"
+pytest = "^8.3.0"
+pytest-asyncio = "^0.24.0"
+pre-commit = "^4.5.1"
+commitizen = "^4.13.7"
+safety = "^3.7.0"
+
+[tool.black]
+line-length = 100
+target-version = ["py312"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "B",  # flake8-bugbear
+    "C4", # flake8-comprehensions
+    "UP", # pyupgrade
+]
+ignore = [
+    "E501", # line too long (handled by black)
+    "B008", # do not perform function calls in default arguments
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["ingress"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+# Adds src/ to PYTHONPATH so pytest can find the 'ingress' package
+# without needing to install it via `pip install -e .` (idiomatic src-layout)
+pythonpath = ["src"]
+
+[tool.bandit]
+exclude_dirs = ["tests", ".venv"]
+skips = ["B101"] # assert statements are OK in tests
+
+[tool.flake8]
+max-line-length = 100
+extend-ignore = ["E501", "E203"]
+exclude = [".venv", ".git", "__pycache__", "build", "dist"]
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+version = "0.1.0"
+tag_format = "v$version"
+version_files = ["pyproject.toml:version"]
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

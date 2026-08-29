@@ -1,0 +1,41 @@
+# Local Poetry virtual environment (NEVER into the container)
+.venv/
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.eggs/
+*.egg-info/
+dist/
+build/
+
+# Environment variables (secrets)
+.env
+
+# Tests and coverage (not needed at runtime)
+tests/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Linters and quality tools
+.ruff_cache/
+.mypy_cache/
+
+# Version control
+.git/
+.gitignore
+
+# Documentation
+*.md
+docs/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

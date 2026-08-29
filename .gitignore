@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments (Poetry creates .venv inside the project directory)
+.venv/
+venv/
+env/
+
+# Environment variables (NEVER commit these)
+.env
+
+# Pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Ruff / Linters
+.ruff_cache/
+
+# MyPy
+.mypy_cache/
+
+# Docker
+*.tar
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Runtime state (local scout and telemetry databases) — must not be published
+data/
