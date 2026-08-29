@@ -178,7 +178,7 @@ docker compose down
 The Helm chart lives in `charts/financial-sigint/`. It deploys **only the two network-facing services** — the orchestrator gateway (API) and the Streamlit dashboard.
 
 > [!NOTE]
-> The seven scout workers, the position monitor, and the Telegram bot are intentionally **not** part of this chart. They are long-running background processes that write to a shared SQLite file (`telemetry.db`) via bind mounts — an access pattern that does not tolerate multi-pod concurrency safely. They stay on Docker Compose (see above) until telemetry storage moves to a real database; porting them to Kubernetes as-is would just be cargo-culting a pattern the app isn't built for.
+> The six scout workers, the position monitor, and the Telegram bot are intentionally **not** part of this chart. They are long-running background processes that write to a shared SQLite file (`telemetry.db`) via bind mounts — an access pattern that does not tolerate multi-pod concurrency safely. They stay on Docker Compose (see above) until telemetry storage moves to a real database; porting them to Kubernetes as-is would just be cargo-culting a pattern the app isn't built for.
 
 ### Chart Structure
 

@@ -8,14 +8,14 @@
 # Usage: make <target>  |  Example: make install
 # =============================================================================
 
-.PHONY: help install pull-model lint format test run docker-build docker-up docker-down clean
+.PHONY: help install pre-commit-install pull-model lint format test test-cov run docker-build docker-up docker-down clean
 
 # Default configuration
 PYTHON        = python
 POETRY        = poetry
 MODEL         ?= llama3.2:latest
 OLLAMA_URL    ?= http://localhost:11434
-SERVICE_PORT  = 8000
+GATEWAY_PORT  = 8001
 
 # Default target: shows help
 .DEFAULT_GOAL := help
@@ -36,8 +36,11 @@ install: ## Installs all dependencies (prod + dev) with Poetry into .venv
 	@echo ">>> Configuring Poetry to create .venv inside the project directory..."
 	$(POETRY) config virtualenvs.in-project true
 	@echo ">>> Installing dependencies..."
-	$(POETRY) install --no-root
+	$(POETRY) install --with dev
 	@echo ">>> Dependencies installed into .venv/"
+
+pre-commit-install: ## Installs the pre-commit hooks (commit-msg + pre-push)
+	$(POETRY) run pre-commit install --hook-type commit-msg --hook-type pre-push
 
 pull-model: ## [IMPORTANT] Downloads the Ollama model before first use
 	@echo ">>> Checking that Ollama is running at $(OLLAMA_URL)..."
@@ -48,21 +51,21 @@ pull-model: ## [IMPORTANT] Downloads the Ollama model before first use
 	@echo ">>> Model '$(MODEL)' ready to use."
 
 # =============================================================================
-# CODE QUALITY (simulated CI/CD pipeline — see agent.md)
+# CODE QUALITY (mirrors the checks run in .github/workflows/python-check.yaml)
 # =============================================================================
 
 format: ## Formats the code with Black
-	$(POETRY) run black src/ tests/ --line-length 100
+	$(POETRY) run black .
 
-lint: ## Runs all linters: ruff, black (check), bandit, flake8
+lint: ## Runs all linters: ruff, black (check), flake8, bandit
 	@echo ">>> [1/4] Ruff (linting + imports)..."
-	$(POETRY) run ruff check src/ tests/
+	$(POETRY) run ruff check .
 	@echo ">>> [2/4] Black (format)..."
-	$(POETRY) run black src/ tests/ --check --line-length 100
-	@echo ">>> [3/4] Bandit (security)..."
-	$(POETRY) run bandit -r src/ -c pyproject.toml
-	@echo ">>> [4/4] Flake8 (style)..."
-	$(POETRY) run flake8 src/ tests/ --max-line-length 100
+	$(POETRY) run black --check .
+	@echo ">>> [3/4] Flake8 (style)..."
+	$(POETRY) run pflake8 .
+	@echo ">>> [4/4] Bandit (security)..."
+	$(POETRY) run bandit -c pyproject.toml -r .
 	@echo ">>> Quality pipeline completed."
 
 # =============================================================================
@@ -73,29 +76,28 @@ test: ## Runs the tests with pytest (does NOT require Ollama running)
 	@echo ">>> Running tests with pytest..."
 	$(POETRY) run pytest tests/ -v --tb=short
 
-test-cov: ## Runs tests with a coverage report
-	$(POETRY) run pytest tests/ -v --tb=short --cov=src --cov-report=term-missing
+test-cov: ## Runs tests with a coverage report, matching the gate enforced in CI
+	$(POETRY) run pytest tests/ -v --tb=short --cov=src --cov-report=term-missing --cov-fail-under=8
 
 # =============================================================================
 # LOCAL EXECUTION (without Docker)
 # =============================================================================
 
-run: ## Starts the microservice locally with hot-reload (requires .env and native Ollama)
+run: ## Starts the orchestrator gateway locally with hot-reload (requires .env and native Ollama)
 	@echo ">>> Make sure .env is configured and Ollama is running on Windows."
 	@echo ">>> Tip: in your local .env, use OLLAMA_BASE_URL=http://localhost:11434"
-	$(POETRY) run fastapi dev src/ingress/main.py --port $(SERVICE_PORT)
+	$(POETRY) run fastapi dev src/orchestrator/workers/main.py --port $(GATEWAY_PORT)
 
 # =============================================================================
 # DOCKER
 # =============================================================================
 
 docker-build: ## Builds the production Docker image (multi-stage)
-	@echo ">>> Building image 'sigint-ingress:latest'..."
-	docker build -t sigint-ingress:latest --target runtime .
+	@echo ">>> Building image 'financial-sigint:latest'..."
+	docker build -t financial-sigint:latest --target runtime .
 
-docker-up: ## Starts the full stack (Ollama + pull model + Ingress)
-	@echo ">>> Starting stack. The model will be downloaded automatically."
-	@echo ">>> This may take several minutes on the first boot."
+docker-up: ## Starts the full stack (see the staged startup order in README.md)
+	@echo ">>> Requires Ollama running natively on the host and a populated .env file."
 	docker compose up --build
 
 docker-up-detached: ## Starts the stack in detached (background) mode

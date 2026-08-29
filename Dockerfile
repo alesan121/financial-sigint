@@ -57,7 +57,8 @@ LABEL description="Financial SIGINT - Ingress Microservice (ADC)"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONPATH=/app/src
 
 WORKDIR /app
 
@@ -85,14 +86,18 @@ RUN groupadd --gid 1001 appgroup && \
 
 USER appuser
 
+# This is a single image shared by every service in docker-compose.yml (the
+# six scouts, the orchestrator gateway, the dashboard, the position monitor
+# and the Telegram bot) — each one overrides CMD with its own `command:`.
+# The values below are only the default when the image is run standalone
+# (e.g. `docker run financial-sigint`), which starts the orchestrator gateway.
+
 # Exposed port (documentation only; the actual mapping happens in docker-compose or k8s)
-EXPOSE 8000
+EXPOSE 8001
 
-# Health check built into the image for Docker/Kubernetes
-HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+# Health check built into the image for Docker/Kubernetes.
+# Every docker-compose service overrides this with its own, more specific check.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD curl -f http://localhost:8001/docs || exit 1
 
-# Startup command using the official FastAPI CLI.
-# 'fastapi run' is the equivalent of uvicorn with production-optimized config.
-# For development with hot-reload, use: 'fastapi dev src/ingress/main.py'
-CMD ["fastapi", "run", "src/ingress/main.py", "--port", "8000"]
+CMD ["python", "-m", "orchestrator.workers.main"]
