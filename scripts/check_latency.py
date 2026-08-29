@@ -7,15 +7,14 @@ Certifies that KEEP_ALIVE keeps the models in a 'Hot State'.
 
 import asyncio
 import time
+
 import httpx
 
 INGRESS_URL = "http://localhost:8000/analyze"
 
+
 async def test_pulse(news_text: str, name: str):
-    payload = {
-        "text": news_text,
-        "source": "SRE-Latency-Probe"
-    }
+    payload = {"text": news_text, "source": "SRE-Latency-Probe"}
 
     t0 = time.perf_counter()
     async with httpx.AsyncClient(timeout=300.0) as client:
@@ -26,6 +25,7 @@ async def test_pulse(news_text: str, name: str):
 
     print(f"[{name}] {status} | Latency: {elapsed:.2f}s")
     return elapsed
+
 
 async def main():
     print("🚀 Starting Latency Test (SRE Pulse)...")
@@ -42,6 +42,7 @@ async def main():
     await test_pulse("Fed signals interest rate hold for next quarter.", "PULSE-B")
 
     print("\n🏁 Latency Certification Completed.")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

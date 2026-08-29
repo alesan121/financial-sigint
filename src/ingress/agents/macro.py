@@ -7,21 +7,22 @@ It measures the global temperature (VIX) and tension levels (DXY/BTC).
 Implements logical "Pull-Up" resistors per channel to avoid ADC failures if a ticker closes.
 """
 
-import logging
 import asyncio
+import logging
 import time
-from typing import Dict, Any
+
 import yfinance as yf
-import pandas as pd
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
+
 class MarketStats(BaseModel):
-    vix: float = 20.0     # Fear (Neutral)
-    dxy: float = 100.0    # Dollar (Neutral)
+    vix: float = 20.0  # Fear (Neutral)
+    dxy: float = 100.0  # Dollar (Neutral)
     btc: float = 60000.0  # Appetite (Neutral)
     timestamp: float = 0.0
+
 
 class MacroProvider:
     """
@@ -40,16 +41,17 @@ class MacroProvider:
         try:
             loop = asyncio.get_running_loop()
             stats = await asyncio.wait_for(
-                loop.run_in_executor(None, self._fetch_sync),
-                timeout=self._timeout
+                loop.run_in_executor(None, self._fetch_sync), timeout=self._timeout
             )
             self._last_stats = stats
             return stats
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning("⚠️ [MACRO] Timeout on the YFinance data bus. Using Failsafe.")
             return self._last_stats
         except Exception as e:
-            logger.error(f"💥 [MACRO] Critical hardware failure in macro sensor: {e}. Using Failsafe.")
+            logger.error(
+                f"💥 [MACRO] Critical hardware failure in macro sensor: {e}. Using Failsafe."
+            )
             return self._last_stats
 
     def _fetch_sync(self) -> MarketStats:
@@ -60,10 +62,10 @@ class MacroProvider:
             tickers = yf.Tickers("^VIX DX-Y.NYB BTC-USD")
             history = tickers.history(period="5d", interval="1d")
 
-            if history.empty or 'Close' not in history:
+            if history.empty or "Close" not in history:
                 raise ValueError("YFinance bus returned an empty frame")
 
-            close_df = history['Close']
+            close_df = history["Close"]
 
             # 🔧 SRE FIX: Safe extraction function (Pull-Up Resistor)
             # Avoids KeyError if a ticker wasn't downloaded and handles NaNs.
@@ -75,16 +77,11 @@ class MacroProvider:
                         return float(val) if val > 0 else default_val
                 return default_val
 
-            vix = _get_safe_val('^VIX', 20.0)
-            dxy = _get_safe_val('DX-Y.NYB', 100.0)
-            btc = _get_safe_val('BTC-USD', 60000.0)
-            
-            return MarketStats(
-                vix=vix,
-                dxy=dxy,
-                btc=btc,
-                timestamp=time.time()
-            )
+            vix = _get_safe_val("^VIX", 20.0)
+            dxy = _get_safe_val("DX-Y.NYB", 100.0)
+            btc = _get_safe_val("BTC-USD", 60000.0)
+
+            return MarketStats(vix=vix, dxy=dxy, btc=btc, timestamp=time.time())
         except Exception as e:
             logger.error(f"[MACRO] Internal error in _fetch_sync: {e}")
-            raise # Re-raise so the async handler uses the failsafe
+            raise  # Re-raise so the async handler uses the failsafe

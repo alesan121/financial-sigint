@@ -1,0 +1,87 @@
+# Default values for the financial-sigint chart.
+# This chart deploys only the two network-facing services (the orchestrator
+# gateway API and the Streamlit dashboard). The scout workers, position
+# monitor, and Telegram bot are intentionally left out of Kubernetes: they
+# are long-running background processes that write to a shared SQLite file
+# via bind mounts, an access pattern that does not tolerate multi-pod
+# concurrency safely. They remain designed to run via Docker Compose (see
+# docker-compose.yml) until telemetry storage moves to a real database.
+
+image:
+  repository: ghcr.io/alesan121/financial-sigint
+  tag: latest
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+# External prerequisites this chart does NOT install (see README for setup):
+#   - Redis (semantic cache for the ingress ADC)
+#   - A reachable Ollama endpoint (local LLM inference)
+config:
+  OLLAMA_BASE_URL: "http://ollama.default.svc.cluster.local:11434"
+  OLLAMA_MODEL_FAST: "llama3.2:1b"
+  OLLAMA_MODEL_PRO: "llama3.2:latest"
+  REDIS_URI: "redis://redis.default.svc.cluster.local:6379/0"
+  DRY_RUN_MODE: "true"
+  ALPACA_PAPER: "true"
+  LOG_LEVEL: "INFO"
+  DASHBOARD_REFRESH_SECS: "30"
+  TELEMETRY_DB_PATH: "/app/data/telemetry.db"
+
+# Secrets are never templated in plain text. Populate the Kubernetes Secret
+# named `financial-sigint-secrets` out of band, or enable externalSecret
+# below to sync it from Vault / AWS / GCP via the External Secrets Operator.
+externalSecret:
+  enabled: false
+  secretStoreRef:
+    name: vault-backend
+    kind: ClusterSecretStore
+  keys:
+    - ALPACA_API_KEY
+    - ALPACA_SECRET_KEY
+    - TELEGRAM_BOT_TOKEN
+    - TELEGRAM_CHAT_ID
+    - FINNHUB_API_KEY
+    - FRED_API_KEY
+
+# Shared telemetry.db between the gateway (writer) and dashboard (reader).
+# SQLite over a shared volume works for a single-node, single-replica
+# deployment; do not scale either component beyond 1 replica without first
+# moving telemetry storage to a real database.
+persistence:
+  enabled: true
+  accessMode: ReadWriteOnce
+  size: 1Gi
+  storageClassName: ""
+
+gateway:
+  replicaCount: 1
+  port: 8001
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+dashboard:
+  replicaCount: 1
+  port: 8501
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+ingress:
+  enabled: false
+  ingressClassName: nginx
+  hosts:
+    gateway: gateway.financial-sigint.example.com
+    dashboard: dashboard.financial-sigint.example.com
+  tls:
+    enabled: false
+    secretName: financial-sigint-tls

@@ -7,10 +7,12 @@ of the Main Bus.
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+
 from orchestrator.state import TradingState
 
 logger = logging.getLogger(__name__)
+
 
 async def node_ingress_receiver(state: TradingState) -> dict:
     """
@@ -19,7 +21,7 @@ async def node_ingress_receiver(state: TradingState) -> dict:
     Normalizes the impedance of signals coming from different scouts
     (RSS, FRED, Insider) so the Router works with a standard voltage.
     """
-    ts = datetime.now(timezone.utc).isoformat()
+    ts = datetime.now(UTC).isoformat()
     signal_in = state.get("ingress_signal", {})
 
     # 🔌 SRE PATCH: Channel normalization (Backward Compatibility)
@@ -33,9 +35,9 @@ async def node_ingress_receiver(state: TradingState) -> dict:
             "ingress_signal": {
                 "ticker": "ERROR",
                 "news_text": "EMPTY_SIGNAL",
-                "reasoning": "Input signal dropped: No usable text payload."
+                "reasoning": "Input signal dropped: No usable text payload.",
             },
-            "logs": [f"[{ts}][FSM_Ingress] Squelch: Empty signal grounded out."]
+            "logs": [f"[{ts}][FSM_Ingress] Squelch: Empty signal grounded out."],
         }
 
     # Bus normalization: Ensure news_text is the primary record
@@ -43,11 +45,13 @@ async def node_ingress_receiver(state: TradingState) -> dict:
     signal["news_text"] = str(raw_text).strip()
 
     if signal.get("ticker") and signal.get("sentiment"):
-        logger.info(f"[{ts}][FSM_Ingress] ⚡ Pre-structured signal (partial bypass) detected: {signal['ticker']}")
+        logger.info(
+            f"[{ts}][FSM_Ingress] ⚡ Pre-structured signal (partial bypass) detected: {signal['ticker']}"
+        )
     else:
         logger.info(f"[{ts}][FSM_Ingress] 📥 RAW signal captured. Injecting into Multiplexer.")
 
     return {
         "ingress_signal": signal,
-        "logs": [f"[{ts}][FSM_Ingress] Handshake successful. Signal synchronized on local bus."]
+        "logs": [f"[{ts}][FSM_Ingress] Handshake successful. Signal synchronized on local bus."],
     }

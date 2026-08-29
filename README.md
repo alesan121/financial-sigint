@@ -15,6 +15,12 @@
   - [🐳 Docker Deployment](#-docker-deployment)
     - [Prepare your Environment](#prepare-your-environment)
     - [Staged Startup](#staged-startup)
+  - [☸️ Kubernetes Deployment (Helm)](#️-kubernetes-deployment-helm)
+    - [Chart Structure](#chart-structure)
+    - [External Prerequisites](#external-prerequisites)
+    - [Secrets](#secrets)
+    - [Install / Upgrade](#install--upgrade)
+    - [Known Limitation: Shared SQLite Volume](#known-limitation-shared-sqlite-volume)
   - [🛡️ Software Craftsmanship \& Values](#️-software-craftsmanship--values)
 
 ## 🏗️ System Architecture
@@ -115,6 +121,12 @@ poetry run bandit -c pyproject.toml -r .
 poetry run pytest tests/ -v
 ```
 
+Run with coverage, matching the gate enforced in CI:
+
+```bash
+poetry run pytest --cov=src --cov-report=term-missing --cov-fail-under=8
+```
+
 Or simply:
 
 ```bash
@@ -161,10 +173,58 @@ To stop everything (named volumes with persistent data are preserved):
 docker compose down
 ```
 
+## ☸️ Kubernetes Deployment (Helm)
+
+The Helm chart lives in `charts/financial-sigint/`. It deploys **only the two network-facing services** — the orchestrator gateway (API) and the Streamlit dashboard.
+
+> [!NOTE]
+> The seven scout workers, the position monitor, and the Telegram bot are intentionally **not** part of this chart. They are long-running background processes that write to a shared SQLite file (`telemetry.db`) via bind mounts — an access pattern that does not tolerate multi-pod concurrency safely. They stay on Docker Compose (see above) until telemetry storage moves to a real database; porting them to Kubernetes as-is would just be cargo-culting a pattern the app isn't built for.
+
+### Chart Structure
+
+```bash
+charts/financial-sigint/
+├── Chart.yaml                  # Metadata and versioning
+├── values.yaml                 # All tunable parameters
+└── templates/
+    ├── _helpers.tpl            # Shared template helpers
+    ├── configmap.yaml          # Non-sensitive env vars (mirrors .env.example)
+    ├── externalsecret.yaml     # ESO ExternalSecret (enabled via values)
+    ├── pvc.yaml                # Shared telemetry.db volume
+    ├── deployment.yaml         # Gateway + Dashboard Deployments
+    ├── service.yaml            # Gateway + Dashboard Services (ClusterIP)
+    └── ingress.yaml            # NGINX Ingress (host-based routing)
+```
+
+### External Prerequisites
+
+The chart does not install these — provision them separately and point `values.yaml`'s `config` block at them:
+
+- **Redis** — semantic cache for the ingress ADC.
+- **A reachable Ollama endpoint** — this app calls a self-hosted LLM, not a hosted API; there is no Kubernetes manifest for Ollama itself in this repo.
+
+### Secrets
+
+Never commit plaintext secrets. Either populate a Kubernetes Secret named `financial-sigint-secrets` out of band, or set `externalSecret.enabled: true` in `values.yaml` to sync `ALPACA_API_KEY`, `ALPACA_SECRET_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `FINNHUB_API_KEY`, and `FRED_API_KEY` from Vault (or another backend) via the [External Secrets Operator](https://external-secrets.io/).
+
+### Install / Upgrade
+
+```bash
+helm upgrade --install financial-sigint ./charts/financial-sigint \
+  --namespace financial-sigint --create-namespace \
+  --set image.tag=v0.1.0 \
+  --set config.OLLAMA_BASE_URL="http://ollama.default.svc.cluster.local:11434" \
+  --set config.REDIS_URI="redis://redis.default.svc.cluster.local:6379/0"
+```
+
+### Known Limitation: Shared SQLite Volume
+
+The gateway (writer) and dashboard (reader) share one PVC for `telemetry.db`. That volume defaults to `ReadWriteOnce`, which only guarantees both pods can mount it if the cluster schedules them on the same node. If your storage class doesn't support `ReadWriteMany`, keep `gateway.replicaCount` and `dashboard.replicaCount` at `1`.
+
 ## 🛡️ Software Craftsmanship & Values
 
 - **100% Local Inference:** all LLM calls run through Ollama — no data or prompts ever leave the machine.
 - **Adversarial Signal Validation:** every trading idea is challenged by an opposing agent before it reaches the risk engine.
 - **Defense in Depth on Capital:** portfolio-level guards (position cap, sector cap, drawdown kill-switch, correlation cap) sit between every signal and real execution.
 - **Human-In-The-Loop by Default:** no order executes without an interactive Telegram approval unless explicitly configured otherwise.
-- **Well-Crafted Software:** typed, linted, security-scanned (Bandit, Trivy, OSV, Gitleaks) and covered by unit, integration and stress tests.
+- **Well-Crafted Software:** typed, linted, and security-scanned (Bandit, Trivy, OSV, Gitleaks) on every pull request. Unit tests cover the safety-critical DSP logic (Kelly sizing, PoP fusion, portfolio guards); integration and stress tests exist for the FSM but are a work in progress as the graph evolves — see [tests/](tests/).

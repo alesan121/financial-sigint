@@ -41,6 +41,7 @@ flake8 = "^7.0.0"
 pyproject-flake8 = "^7.0.0"
 pytest = "^8.3.0"
 pytest-asyncio = "^0.24.0"
+pytest-cov = "^6.0.0"
 pre-commit = "^4.5.1"
 commitizen = "^4.13.7"
 safety = "^3.7.0"
@@ -78,6 +79,20 @@ testpaths = ["tests"]
 # without needing to install it via `pip install -e .` (idiomatic src-layout)
 pythonpath = ["src"]
 
+[tool.coverage.run]
+source = ["src"]
+omit = [
+    "*/__init__.py",
+    "src/ui/*",
+]
+
+[tool.coverage.report]
+fail_under = 8
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+]
+
 [tool.bandit]
 exclude_dirs = ["tests", ".venv"]
 skips = ["B101"] # assert statements are OK in tests
@@ -92,6 +107,29 @@ name = "cz_conventional_commits"
 version = "0.1.0"
 tag_format = "v$version"
 version_files = ["pyproject.toml:version"]
+
+[tool.semantic_release]
+version_toml = ["pyproject.toml:tool.poetry.version"]
+commit_message = "chore(release): {version}"
+commit_parser = "conventional"
+major_on_zero = true
+allow_zero_version = true
+tag_format = "v{version}"
+
+[tool.semantic_release.branches.main]
+match = "^main$"
+prerelease = false
+
+[tool.semantic_release.commit_author]
+env = "GIT_COMMIT_AUTHOR"
+default = "github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
+
+[tool.semantic_release.commit_parser_options]
+minor_tags = ["feat"]
+patch_tags = ["fix", "perf"]
+other_allowed_tags = ["build", "chore", "ci", "docs", "style", "refactor", "test"]
+allowed_tags = ["feat", "fix", "perf", "build", "chore", "ci", "docs", "style", "refactor", "test"]
+default_bump_level = 0
 
 [build-system]
 requires = ["poetry-core"]

@@ -2,9 +2,12 @@
 orchestrator/core/config.py - Plant EEPROM v4.2.
 Registry of system voltages and constants.
 """
+
 from functools import lru_cache
+
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
 
 class OrchestratorSettings(BaseSettings):
     # --- INFERENCE BUS ---
@@ -40,6 +43,7 @@ class OrchestratorSettings(BaseSettings):
     hitl_enabled: bool = Field(default=True)
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
 
 @lru_cache(maxsize=1)
 def get_orchestrator_settings() -> OrchestratorSettings:

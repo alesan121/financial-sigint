@@ -53,8 +53,7 @@ class NasdaqImpactOutput(BaseModel):
         ge=-1.0,
         le=1.0,
         description=(
-            "Nasdaq impact score. "
-            "Range: [-1.0 (very bearish) to +1.0 (very bullish)]."
+            "Nasdaq impact score. " "Range: [-1.0 (very bearish) to +1.0 (very bullish)]."
         ),
     )
     sentiment: Literal["bullish", "bearish", "neutral"] = Field(

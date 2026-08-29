@@ -9,18 +9,25 @@ orchestrator bus.
 
 import asyncio
 import logging
+
 import httpx
+
 from orchestrator.core.config import get_orchestrator_settings
 
 logger = logging.getLogger("telegram_bot")
 logging.basicConfig(level=logging.INFO)
+
 
 async def run_telegram_bot():
     """
     Listen Loop: Continuously polls getUpdates.
     """
     settings = get_orchestrator_settings()
-    token = settings.telegram_bot_token.get_secret_value() if hasattr(settings.telegram_bot_token, "get_secret_value") else settings.telegram_bot_token
+    token = (
+        settings.telegram_bot_token.get_secret_value()
+        if hasattr(settings.telegram_bot_token, "get_secret_value")
+        else settings.telegram_bot_token
+    )
 
     if not token:
         logger.error("❌ [Bot_Fault] Missing TOKEN in EEPROM. Aborting.")
@@ -74,23 +81,29 @@ async def run_telegram_bot():
                             logger.info(f"🚀 [COMMAND] Injecting Override: {target}")
 
                             r_inj = await client.post(target)
-                            logger.info(f"📡 [COMMAND_ACK] Orchestrator responded: {r_inj.status_code}")
+                            logger.info(
+                                f"📡 [COMMAND_ACK] Orchestrator responded: {r_inj.status_code}"
+                            )
                             if r_inj.status_code != 200:
-                                logger.error(f"❌ [COMMAND_FAULT] Orchestrator rejected the order: {r_inj.text}")
+                                logger.error(
+                                    f"❌ [COMMAND_FAULT] Orchestrator rejected the order: {r_inj.text}"
+                                )
 
                             # 3. ACK to Telegram (Removes the button's wait spinner)
-                            await client.post(answer_url, json={
-                                "callback_query_id": cb["id"],
-                                "text": f"✅ Order: {decision} sent to bus."
-                            })
+                            await client.post(
+                                answer_url,
+                                json={
+                                    "callback_query_id": cb["id"],
+                                    "text": f"✅ Order: {decision} sent to bus.",
+                                },
+                            )
 
                             # 4. Visual Feedback (Plain text to avoid Markdown escaping failures)
                             new_text = f"⚙️ COMMAND RECEIVED\nID: {thread_id}\nAction: {decision}\n\nThe orchestrator is resuming the sequence..."
-                            await client.post(edit_url, json={
-                                "chat_id": chat_id,
-                                "message_id": msg_id,
-                                "text": new_text
-                            })
+                            await client.post(
+                                edit_url,
+                                json={"chat_id": chat_id, "message_id": msg_id, "text": new_text},
+                            )
 
                         except Exception as e:
                             logger.error(f"💥 [Cmd_Parsing_Error] Could not process {data}: {e}")
@@ -98,6 +111,7 @@ async def run_telegram_bot():
             except Exception as e:
                 logger.error(f"🚨 [Polling_Fault] Error in listening bus: {e}")
                 await asyncio.sleep(5)
+
 
 if __name__ == "__main__":
     asyncio.run(run_telegram_bot())

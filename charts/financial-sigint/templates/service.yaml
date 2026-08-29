@@ -1,0 +1,35 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "financial-sigint.fullname" . }}-gateway
+  labels:
+    {{- include "financial-sigint.componentLabels" (dict "component" "gateway" "Chart" .Chart "Release" .Release) | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: gateway
+  ports:
+    - port: {{ .Values.gateway.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "financial-sigint.fullname" . }}-dashboard
+  labels:
+    {{- include "financial-sigint.componentLabels" (dict "component" "dashboard" "Chart" .Chart "Release" .Release) | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: dashboard
+  ports:
+    - port: {{ .Values.dashboard.port }}
+      targetPort: http
+      protocol: TCP
+      name: http

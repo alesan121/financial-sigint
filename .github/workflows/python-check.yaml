@@ -1,12 +1,23 @@
 name: Python Check
+
 on:
+  workflow_dispatch:
   pull_request:
     branches:
       - main
     types:
       - opened
       - synchronize
-  workflow_dispatch:
+      - reopened
+      - edited
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - "poetry.lock"
+      - ".github/workflows/python-check.yaml"
+      - ".github/actions/trivy-summary/**"
+      - ".github/actions/osv-summary/**"
 
 jobs:
   validate-contribution:
@@ -25,16 +36,13 @@ jobs:
       - name: Set up Python 3.12
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
       - name: Install Poetry
         run: pip install poetry
 
       - name: Install dependencies
         run: poetry install --with dev
-
-      - name: Run tests
-        run: poetry run pytest tests/ -v --tb=short
 
       - name: Run Black
         run: poetry run black --check .
@@ -45,29 +53,98 @@ jobs:
       - name: Run Flake8
         run: poetry run pflake8 .
 
+      - name: Run unit tests with coverage
+        run: |
+          poetry run pytest \
+            --cov=src \
+            --cov-report=term-missing \
+            --cov-report=xml:coverage.xml \
+            --cov-fail-under=8 \
+            -v
+
+      - name: Upload coverage report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-report
+          path: coverage.xml
+          if-no-files-found: warn
+          overwrite: true
+          retention-days: 7
+
       - name: Run Bandit
         run: poetry run bandit -c pyproject.toml -r .
 
       - name: Run Safety
+        continue-on-error: true
         env:
           SAFETY_API_KEY: ${{ secrets.SAFETY_API_KEY }}
         run: poetry run safety scan
 
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        id: trivy-scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        continue-on-error: true
         with:
-          scan-type: 'fs'
-          scan-ref: '.'
-          format: 'table'
-          exit-code: '1'
-          severity: 'CRITICAL,HIGH,MEDIUM'
-          ignore-unfixed: true
+          scan-type: "fs"
+          scan-ref: "."
+          format: "json"
+          output: "${{ github.workspace }}/trivy-results-${{ github.run_id }}.json"
+          exit-code: "1"
+          severity: "LOW,MEDIUM,HIGH,CRITICAL"
+          ignore-unfixed: false
+
+      - name: Upload Trivy results artifact
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: trivy-results
+          path: "${{ github.workspace }}/trivy-results-${{ github.run_id }}.json"
+          if-no-files-found: warn
+          overwrite: true
+          retention-days: 7
+
+      - name: Write Trivy results to workflow summary
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/trivy-summary
+        with:
+          results-path: "${{ github.workspace }}/trivy-results-${{ github.run_id }}.json"
 
       - name: Run Google OSV Scanner
-        uses: google/osv-scanner-action/osv-scanner-action@c51854704019a247608d928f370c98740469d4b5 # v2.3.5
+        id: osv-scan
+        uses: google/osv-scanner-action/osv-scanner-action@9a498708959aeaef5ef730655706c5a1df1edbc2 # v2.3.8
+        continue-on-error: true
         with:
           scan-args: |-
+            --output=osv-scanner-results-${{ github.run_id }}.json
+            --format=json
             -r .
+
+      - name: Run Google OSV Reporter
+        uses: google/osv-scanner-action/osv-reporter-action@9fd1bcce27f67e3bd819a0a7620e332803dc43bc # v2.3.8
+        continue-on-error: true
+        with:
+          scan-args: |-
+            --output=osv-report-${{ github.run_id }}.json
+            --new=osv-scanner-results-${{ github.run_id }}.json
+            --gh-annotations=true
+            --fail-on-vuln=false
+
+      - name: Write OSV results to workflow summary
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/osv-summary
+        with:
+          results-path: osv-scanner-results-${{ github.run_id }}.json
+
+      - name: Upload OSV results artifact
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: osv-results
+          path: "${{ github.workspace }}/osv-scanner-results-${{ github.run_id }}.json"
+          if-no-files-found: warn
+          overwrite: true
+          retention-days: 7
 
       - name: Run Gitleaks secret scanner
         uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9

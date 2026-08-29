@@ -1,5 +1,5 @@
-import sqlite3
 import os
+import sqlite3
 
 db_path = r"c:\Users\alesa\source\repos\sigint-financiero\data\telemetry\telemetry.db"
 print(f"🔍 Opening EEPROM at: {db_path}")
@@ -20,7 +20,9 @@ try:
     else:
         print("📜 Last records detected:")
         for row in rows:
-            print(f"ID: {row['id']} | Ticker: {row['ticker']} | Action: {row['action']} | Reason: {row['reason']}")
+            print(
+                f"ID: {row['id']} | Ticker: {row['ticker']} | Action: {row['action']} | Reason: {row['reason']}"
+            )
 
     conn.close()
 except Exception as e:

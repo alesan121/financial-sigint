@@ -1,7 +1,9 @@
 import logging
 import os
+from datetime import UTC, datetime
+
 import aiosqlite
-from datetime import datetime, timezone
+
 from orchestrator.core.config import get_orchestrator_settings
 
 logger = logging.getLogger("agentops.telemetry")
@@ -35,6 +37,7 @@ CREATE TABLE IF NOT EXISTS execution_logs (
 );
 """
 
+
 async def init_telemetry_bus():
     """Low-level data bus formatting (BIOS)."""
     settings = get_orchestrator_settings()
@@ -53,37 +56,43 @@ async def init_telemetry_bus():
                 ("vix_level", "REAL"),
                 ("market_regime", "TEXT"),
                 ("meta_judge_verdict", "TEXT"),
-                ("meta_judge_confidence", "REAL")
+                ("meta_judge_confidence", "REAL"),
             ]
             for name, dtype in new_cols:
                 try:
                     await db.execute(f"ALTER TABLE execution_logs ADD COLUMN {name} {dtype}")
-                except Exception:
-                    pass # Column already exists
+                except Exception:  # nosec B110
+                    pass  # Column already exists
 
             await db.commit()
             logger.info(f"✅ [telemetry] Data bus synchronized at {db_path}")
     except Exception as e:
         logger.error(f"❌ [telemetry_fault] Hardware failure in DB: {e}")
 
+
 async def log_execution(**kwargs):
     """Data injector into the Black Box."""
     settings = get_orchestrator_settings()
     db_path = settings.telemetry_db_path
-    
+
     keys = kwargs.keys()
     columns = ", ".join(keys)
     placeholders = ", ".join([f":{k}" for k in keys])
-    sql = f"INSERT INTO execution_logs ({columns}, timestamp) VALUES ({placeholders}, :ts)"
-    
+    # Column names come from this module's own call sites (kwargs keys), never from
+    # external/user input; values are bound via named placeholders.
+    sql = f"INSERT INTO execution_logs ({columns}, timestamp) VALUES ({placeholders}, :ts)"  # nosec B608
+
     try:
         async with aiosqlite.connect(db_path) as db:
-            data = {**kwargs, "ts": datetime.now(timezone.utc).isoformat()}
+            data = {**kwargs, "ts": datetime.now(UTC).isoformat()}
             await db.execute(sql, data)
             await db.commit()
-            logger.info(f"[telemetry] Decision Logged: {kwargs.get('ticker')} -> {kwargs.get('action')}")
+            logger.info(
+                f"[telemetry] Decision Logged: {kwargs.get('ticker')} -> {kwargs.get('action')}"
+            )
     except Exception as e:
         logger.error(f"💥 [telemetry_write_fault] Write error: {e}")
+
 
 async def get_throughput_stats(hours: int = 4) -> dict:
     """
@@ -91,9 +100,10 @@ async def get_throughput_stats(hours: int = 4) -> dict:
     Analogy: Reading the CPU cycle counter over the last time window.
     """
     from orchestrator.core.config import get_orchestrator_settings
+
     settings = get_orchestrator_settings()
     db_path = settings.telemetry_db_path
-    
+
     try:
         if not os.path.exists(db_path):
             return {"total": 0, "executed": 0, "discarded": 0}
@@ -101,15 +111,16 @@ async def get_throughput_stats(hours: int = 4) -> dict:
         async with aiosqlite.connect(db_path) as db:
             # Compute the cutoff timestamp (T - N hours)
             from datetime import timedelta
-            cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+
+            cutoff = (datetime.now(UTC) - timedelta(hours=hours)).isoformat()
 
             # Query total volume and segmentation by action
             async with db.execute(
                 "SELECT action, COUNT(*) FROM execution_logs WHERE timestamp > ? GROUP BY action",
-                (cutoff,)
+                (cutoff,),
             ) as cursor:
                 rows = await cursor.fetchall()
-                
+
                 stats = {"total": 0, "executed": 0, "discarded": 0}
                 for action, count in rows:
                     stats["total"] += count
@@ -117,7 +128,7 @@ async def get_throughput_stats(hours: int = 4) -> dict:
                         stats["executed"] += count
                     else:
                         stats["discarded"] += count
-                
+
                 return stats
     except Exception as e:
         logger.error(f"💥 [TELEMETRY_READ_FAULT] Failed to extract throughput: {e}")

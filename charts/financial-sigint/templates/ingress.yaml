@@ -1,0 +1,38 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "financial-sigint.fullname" . }}
+  labels:
+    {{- include "financial-sigint.labels" . | nindent 4 }}
+spec:
+  ingressClassName: {{ .Values.ingress.ingressClassName }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.hosts.gateway }}
+        - {{ .Values.ingress.hosts.dashboard }}
+      secretName: {{ .Values.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.hosts.gateway }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "financial-sigint.fullname" . }}-gateway
+                port:
+                  number: {{ .Values.gateway.port }}
+    - host: {{ .Values.ingress.hosts.dashboard }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "financial-sigint.fullname" . }}-dashboard
+                port:
+                  number: {{ .Values.dashboard.port }}
+{{- end }}

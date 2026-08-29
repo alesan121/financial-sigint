@@ -9,11 +9,10 @@ import asyncio
 import hashlib
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import aiosqlite
 import httpx
-import pandas as pd
 import yfinance as yf
 
 logger = logging.getLogger(__name__)
@@ -24,19 +23,19 @@ logger = logging.getLogger(__name__)
 
 # 🔧 SRE FIX: Point directly at the FSM Bus
 ORCHESTRATOR_URL: str = os.getenv("ORCHESTRATOR_URL", "http://orchestrator:8001/trigger")
-DB_PATH: str     = os.getenv("SCOUT_DB_PATH", "/data/scout_seen.db")
+DB_PATH: str = os.getenv("SCOUT_DB_PATH", "/data/scout_seen.db")
 
 POLL_INTERVAL_SECONDS: int = int(os.getenv("OPTIONS_POLL_INTERVAL_SECONDS", "7200"))
-MIN_VOLUME_OI_RATIO: float = float(os.getenv("OPTIONS_MIN_VOL_OI", "2.0"))  
-MIN_ABSOLUTE_VOLUME: int   = int(os.getenv("OPTIONS_MIN_VOLUME", "500"))    
-MIN_PREMIUM_USD: float     = float(os.getenv("OPTIONS_MIN_PREMIUM_USD", "50000.0"))  
+MIN_VOLUME_OI_RATIO: float = float(os.getenv("OPTIONS_MIN_VOL_OI", "2.0"))
+MIN_ABSOLUTE_VOLUME: int = int(os.getenv("OPTIONS_MIN_VOLUME", "500"))
+MIN_PREMIUM_USD: float = float(os.getenv("OPTIONS_MIN_PREMIUM_USD", "50000.0"))
 
 WATCHLIST: list[str] = [
     ticker.strip().upper()
     for ticker in os.getenv(
         "OPTIONS_WATCHLIST",
         "SPY,QQQ,AAPL,MSFT,NVDA,TSLA,AMZN,META,GOOGL,AMD,"
-        "JPM,GS,XOM,GLD,USO,TLT,IWM,VIX,PLTR,NFLX"
+        "JPM,GS,XOM,GLD,USO,TLT,IWM,VIX,PLTR,NFLX",
     ).split(",")
     if ticker.strip()
 ]
@@ -45,6 +44,7 @@ WATCHLIST: list[str] = [
 # DEDUPLICATOR
 # =============================================================================
 
+
 async def _ensure_db(conn: aiosqlite.Connection) -> None:
     await conn.execute(
         "CREATE TABLE IF NOT EXISTS seen_signals "
@@ -52,20 +52,24 @@ async def _ensure_db(conn: aiosqlite.Connection) -> None:
     )
     await conn.commit()
 
+
 async def _is_seen(conn: aiosqlite.Connection, h: str) -> bool:
     async with conn.execute("SELECT 1 FROM seen_signals WHERE hash=?", (h,)) as c:
         return await c.fetchone() is not None
 
+
 async def _mark_seen(conn: aiosqlite.Connection, h: str, src: str) -> None:
     await conn.execute(
         "INSERT OR IGNORE INTO seen_signals (hash, source, seen_at) VALUES (?,?,?)",
-        (h, src, datetime.now(timezone.utc).isoformat()),
+        (h, src, datetime.now(UTC).isoformat()),
     )
     await conn.commit()
+
 
 # =============================================================================
 # ACQUISITION: Options Chain via yfinance
 # =============================================================================
+
 
 def _get_unusual_options(ticker: str) -> list[dict]:
     unusual: list[dict] = []
@@ -76,16 +80,16 @@ def _get_unusual_options(ticker: str) -> list[dict]:
             return unusual
 
         exp_date = expirations[0]
-        chain    = t.option_chain(exp_date)
+        chain = t.option_chain(exp_date)
 
         for option_type, df in [("CALL", chain.calls), ("PUT", chain.puts)]:
             if df is None or df.empty:
                 continue
 
             mask = (
-                (df["volume"] >= MIN_ABSOLUTE_VOLUME) &
-                (df["openInterest"] > 0) &
-                (df["volume"] / df["openInterest"] >= MIN_VOLUME_OI_RATIO)
+                (df["volume"] >= MIN_ABSOLUTE_VOLUME)
+                & (df["openInterest"] > 0)
+                & (df["volume"] / df["openInterest"] >= MIN_VOLUME_OI_RATIO)
             )
             active = df[mask].copy()
 
@@ -93,33 +97,36 @@ def _get_unusual_options(ticker: str) -> list[dict]:
                 continue
 
             for _, row in active.iterrows():
-                volume     = int(row.get("volume", 0) or 0)
-                oi         = int(row.get("openInterest", 0) or 0)
-                ask        = float(row.get("ask", 0) or 0)
-                strike     = float(row.get("strike", 0) or 0)
-                impl_vol   = float(row.get("impliedVolatility", 0) or 0)
-                premium_usd = volume * ask * 100  
+                volume = int(row.get("volume", 0) or 0)
+                oi = int(row.get("openInterest", 0) or 0)
+                ask = float(row.get("ask", 0) or 0)
+                strike = float(row.get("strike", 0) or 0)
+                impl_vol = float(row.get("impliedVolatility", 0) or 0)
+                premium_usd = volume * ask * 100
 
                 if premium_usd < MIN_PREMIUM_USD:
                     continue
 
-                unusual.append({
-                    "ticker":       ticker,
-                    "option_type":  option_type,
-                    "strike":       strike,
-                    "expiration":   exp_date,
-                    "volume":       volume,
-                    "open_interest": oi,
-                    "vol_oi_ratio": volume / oi if oi > 0 else 0.0,
-                    "ask":          ask,
-                    "premium_usd":  premium_usd,
-                    "impl_vol":     impl_vol * 100,
-                })
+                unusual.append(
+                    {
+                        "ticker": ticker,
+                        "option_type": option_type,
+                        "strike": strike,
+                        "expiration": exp_date,
+                        "volume": volume,
+                        "open_interest": oi,
+                        "vol_oi_ratio": volume / oi if oi > 0 else 0.0,
+                        "ask": ask,
+                        "premium_usd": premium_usd,
+                        "impl_vol": impl_vol * 100,
+                    }
+                )
 
     except Exception as e:
         logger.debug("[OptionsScout][%s] Error getting options: %s", ticker, e)
 
     return unusual
+
 
 def _get_current_price(ticker: str) -> float:
     """Extracts the current price in isolation."""
@@ -128,15 +135,16 @@ def _get_current_price(ticker: str) -> float:
     except Exception:
         return 0.0
 
+
 def _format_signal(activity: dict, current_price: float) -> tuple[str, str]:
-    ticker    = activity["ticker"]
-    opt_type  = activity["option_type"]
-    strike    = activity["strike"]
-    exp       = activity["expiration"]
-    volume    = activity["volume"]
+    ticker = activity["ticker"]
+    opt_type = activity["option_type"]
+    strike = activity["strike"]
+    exp = activity["expiration"]
+    volume = activity["volume"]
     premium_k = activity["premium_usd"] / 1_000
-    impl_vol  = activity["impl_vol"]
-    vol_oi    = activity["vol_oi_ratio"]
+    impl_vol = activity["impl_vol"]
+    vol_oi = activity["vol_oi_ratio"]
 
     direction = "BULLISH" if opt_type == "CALL" else "BEARISH"
     interpretation = (
@@ -168,78 +176,106 @@ def _format_signal(activity: dict, current_price: float) -> tuple[str, str]:
         f"merger rumors) that could justify this position size."
     )
 
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today = datetime.now(UTC).strftime("%Y-%m-%d")
     h = hashlib.sha256(
         f"options:{ticker}:{opt_type}:{strike}:{exp}:{volume}:{today}".encode()
     ).hexdigest()
     return text, h
 
+
 # =============================================================================
 # DISPATCHER
 # =============================================================================
 
-async def _dispatch_to_fsm(client: httpx.AsyncClient, text: str, symbol: str, opt_type: str) -> bool:
+
+async def _dispatch_to_fsm(
+    client: httpx.AsyncClient, text: str, symbol: str, opt_type: str
+) -> bool:
     payload = {
         "ticker": symbol,
-        "text":   text,
+        "text": text,
         "source": f"Unusual Options Flow — {symbol} {opt_type}",
     }
     for attempt in range(3):
         try:
-            logger.info("[OptionsScout][%s] ⚡ Injecting pulse into FSM Gateway (Attempt %d): %s", symbol, attempt+1, ORCHESTRATOR_URL)
-            response = await client.post(ORCHESTRATOR_URL, json=payload, timeout=60.0) # 🔌 SRE: Timeout extended to 60s
+            logger.info(
+                "[OptionsScout][%s] ⚡ Injecting pulse into FSM Gateway (Attempt %d): %s",
+                symbol,
+                attempt + 1,
+                ORCHESTRATOR_URL,
+            )
+            response = await client.post(
+                ORCHESTRATOR_URL, json=payload, timeout=60.0
+            )  # 🔌 SRE: Timeout extended to 60s
             response.raise_for_status()
             ack = response.json()
-            logger.info("[OptionsScout][%s] ✅ FSM Cycle Queued | thread_id=%s", symbol, ack.get("thread_id", "unknown"))
+            logger.info(
+                "[OptionsScout][%s] ✅ FSM Cycle Queued | thread_id=%s",
+                symbol,
+                ack.get("thread_id", "unknown"),
+            )
             return True
         except Exception as e:
-            logger.warning("[OptionsScout][%s] Retry %d failed: %s", symbol, attempt+1, e)
-            await asyncio.sleep(2 ** attempt) # Exponential backoff
+            logger.warning("[OptionsScout][%s] Retry %d failed: %s", symbol, attempt + 1, e)
+            await asyncio.sleep(2**attempt)  # Exponential backoff
 
-    logger.error("[OptionsScout][%s] Critical bus error after 3 attempts. Signal discarded.", symbol)
+    logger.error(
+        "[OptionsScout][%s] Critical bus error after 3 attempts. Signal discarded.", symbol
+    )
     return False
+
 
 # =============================================================================
 # MAIN CYCLE
 # =============================================================================
 
+
 async def _scan_once(client: httpx.AsyncClient, conn: aiosqlite.Connection) -> None:
     all_unusual: list[dict] = []
-    loop = asyncio.get_running_loop() # 🔧 SRE FIX: Correct asynchronous clock
+    loop = asyncio.get_running_loop()  # 🔧 SRE FIX: Correct asynchronous clock
 
     for ticker in WATCHLIST:
         unusual_list = await loop.run_in_executor(None, _get_unusual_options, ticker)
 
         if unusual_list:
-            logger.info("[OptionsScout][%s] 🎯 %d unusual contracts detected", ticker, len(unusual_list))
+            logger.info(
+                "[OptionsScout][%s] 🎯 %d unusual contracts detected", ticker, len(unusual_list)
+            )
             # 🔧 SRE FIX: Safe execution of blocking IO
             current_price = await loop.run_in_executor(None, _get_current_price, ticker)
-            
+
             for item in unusual_list:
                 item["_ticker_price"] = current_price
-            
+
             all_unusual.extend(unusual_list)
         await asyncio.sleep(0.5)
 
     all_unusual.sort(key=lambda x: x["premium_usd"], reverse=True)
 
     dispatched = 0
-    for activity in all_unusual[:5]:  
+    for activity in all_unusual[:5]:
         current_price = activity.pop("_ticker_price", 0.0)
         text, h = _format_signal(activity, current_price)
 
         if await _is_seen(conn, h):
             continue
 
-        success = await _dispatch_to_fsm(client, text, activity['ticker'], activity['option_type'])
+        success = await _dispatch_to_fsm(client, text, activity["ticker"], activity["option_type"])
         if success:
             await _mark_seen(conn, h, f"options:{activity['ticker']}")
             dispatched += 1
 
-    logger.info("[OptionsScout] Cycle completed | %d unusual positions | %d dispatched", len(all_unusual), dispatched)
+    logger.info(
+        "[OptionsScout] Cycle completed | %d unusual positions | %d dispatched",
+        len(all_unusual),
+        dispatched,
+    )
+
 
 async def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
+    )
     logger.info("=== SIGINT Options Scout v1.0 ===\nWatchlist: %d tickers", len(WATCHLIST))
 
     async with aiosqlite.connect(DB_PATH) as conn:
@@ -248,7 +284,9 @@ async def main() -> None:
         while True:
             cycle += 1
             logger.info("[OptionsScout] === Cycle #%d ===", cycle)
-            async with httpx.AsyncClient(headers={"User-Agent": "SIGINT-OptionsScout/1.0"}, timeout=300.0) as client:
+            async with httpx.AsyncClient(
+                headers={"User-Agent": "SIGINT-OptionsScout/1.0"}, timeout=300.0
+            ) as client:
                 try:
                     await _scan_once(client, conn)
                 except Exception as e:
@@ -256,6 +294,7 @@ async def main() -> None:
 
             logger.info("[OptionsScout] 💤 Next cycle in %ds", POLL_INTERVAL_SECONDS)
             await asyncio.sleep(POLL_INTERVAL_SECONDS)
+
 
 if __name__ == "__main__":
     asyncio.run(main())

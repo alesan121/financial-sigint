@@ -4,22 +4,20 @@ Analogy: Injects a square wave (financial news) into the input bus
 to verify continuity of the Multi-Agent cluster (Router -> Extractor -> Analyzer).
 """
 
-import sys
-import os
 import asyncio
+import os
+import sys
 import time
-import json
-from datetime import datetime, timezone
 
 # Path bus adjustment: make sure Python finds the 'src' package
 # We add the absolute path to the 'src' subdirectory so relative imports work.
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 
 try:
     from orchestrator.graph import run_trading_cycle
 except ImportError as e:
-    print(f"❌ [SRE] Routing failure: Could not import 'run_trading_cycle'.")
-    print(f"   Make sure you run this from the project root or within the poetry environment.")
+    print("❌ [SRE] Routing failure: Could not import 'run_trading_cycle'.")
+    print("   Make sure you run this from the project root or within the poetry environment.")
     print(f"   Error: {e}")
     sys.exit(1)
 
@@ -34,10 +32,11 @@ causing institutional investors to panic sell. Supply chain issues in Taiwan
 might also delay production by 3 months.
 """
 
+
 async def run_diagnostics():
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("📡 [SRE] SIGINT - STARTING POST SEQUENCE (Power-On Self-Test)")
-    print("="*70)
+    print("=" * 70)
     print(f"🔌 [SRE] Injecting carrier wave (Length: {len(TEST_NEWS)} chars)")
     print("-" * 70)
 
@@ -66,10 +65,13 @@ async def run_diagnostics():
         print(f"  [SNR] Impact Score       : {ingress_data.get('impact_score', 'N/A')}")
 
         print("\n🧠 --- ANALYZER SYNTHESIS (Phi-4 Reasoning Core) ---")
-        reasoning = ingress_data.get('reasoning', 'No reasoning on the bus')
+        reasoning = ingress_data.get("reasoning", "No reasoning on the bus")
         # Print a meaningful chunk of the synthesis
         cutoff = 600
-        print(reasoning[:cutoff] + ("\n[... SIGNAL TRUNCATED BY THE POST BUFFER ...]" if len(reasoning) > cutoff else ""))
+        print(
+            reasoning[:cutoff]
+            + ("\n[... SIGNAL TRUNCATED BY THE POST BUFFER ...]" if len(reasoning) > cutoff else "")
+        )
 
         print("\n📜 --- HARDWARE LOG AUDIT (Full Trace) ---")
         logs = final_state.get("logs", [])
@@ -78,14 +80,16 @@ async def run_diagnostics():
         for log in logs:
             print(f"   > {log}")
 
-        print("\n" + "="*70)
+        print("\n" + "=" * 70)
         print("✅ [SRE] NOMINAL DIAGNOSTIC - SYSTEM READY FOR GO-LIVE")
-        print("="*70)
+        print("=" * 70)
 
     except Exception as e:
         print(f"\n💥 [SRE] CRITICAL SHORT CIRCUIT DETECTED: {str(e)}")
         import traceback
+
         traceback.print_exc()
+
 
 if __name__ == "__main__":
     # Ignite the async loop in the runtime environment
