@@ -103,7 +103,7 @@ async def run_position_monitor():
 
     while True:
         try:
-            await asyncio.sleep(int(os.getenv("MONITOR_POLL_INTERVAL", "30")))
+            await asyncio.sleep(int(os.getenv("MONITOR_POLL_INTERVAL_SECONDS", "60")))
 
             # 📥 Current measurement
             current_raw = await loop.run_in_executor(None, client.get_all_positions)

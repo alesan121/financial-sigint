@@ -28,6 +28,7 @@ async def run_telegram_bot():
         if hasattr(settings.telegram_bot_token, "get_secret_value")
         else settings.telegram_bot_token
     )
+    authorized_chat_id = str(settings.telegram_chat_id)
 
     if not token:
         logger.error("❌ [Bot_Fault] Missing TOKEN in EEPROM. Aborting.")
@@ -68,6 +69,24 @@ async def run_telegram_bot():
 
                         chat_id = cb["message"]["chat"]["id"]
                         msg_id = cb["message"]["message_id"]
+
+                        # 🛡️ AUTHORIZATION GUARD: Only the configured operator's chat may
+                        # approve or reject a trade. Without this check, anyone able to
+                        # message the bot (e.g. in a shared group) could trigger a live
+                        # order via a forged callback_data payload.
+                        if str(chat_id) != authorized_chat_id:
+                            logger.warning(
+                                f"🚫 [HITL_UNAUTHORIZED] Callback from unauthorized chat {chat_id} "
+                                f"ignored: {data}"
+                            )
+                            await client.post(
+                                answer_url,
+                                json={
+                                    "callback_query_id": cb["id"],
+                                    "text": "⛔ Unauthorized.",
+                                },
+                            )
+                            continue
 
                         logger.info(f"🕹️ Command signal detected: {data}")
 
