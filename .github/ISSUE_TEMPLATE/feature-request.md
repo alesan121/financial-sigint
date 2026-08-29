@@ -11,4 +11,4 @@ A detailed description of the issue you want to report. Make sure there is not a
 ## Impact
 Describe the motivation for the issue. Is there a real need to add the feature? Is it really helpful?
 ## Workarounds
-How can you reach the same funcionality today? Is there already any add-on?
+How can you reach the same functionality today? Is there already any add-on?
