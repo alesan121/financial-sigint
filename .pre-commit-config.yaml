@@ -23,6 +23,8 @@ repos:
       - id: no-commit-to-branch
         args: ["--branch", "main"]
       - id: check-yaml
+        args: ["--unsafe"]
+        exclude: ^charts/financial-sigint/templates/
       - id: check-toml
       - id: trailing-whitespace
       - id: end-of-file-fixer
