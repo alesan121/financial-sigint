@@ -134,7 +134,10 @@ async def node_execution_agent(state: TradingState) -> dict:
 
     # --- Simple Bracket Execution ---
     main_order_id = "MOCK_OR_FAILED"
-    dry_run = os.getenv("DRY_RUN_MODE", "False").lower() == "true"
+    # Fail-safe: an unset or malformed DRY_RUN_MODE must never fall through to
+    # live order submission. Default to dry-run, matching docker-compose.yml's
+    # own ${DRY_RUN_MODE:-true} default.
+    dry_run = os.getenv("DRY_RUN_MODE", "True").lower() == "true"
 
     try:
         if dry_run:

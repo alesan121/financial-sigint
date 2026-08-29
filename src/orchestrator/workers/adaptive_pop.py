@@ -21,9 +21,11 @@ logger = logging.getLogger("agentops.telemetry")
 BASE_POP = float(os.getenv("MIN_POP_THRESHOLD", "0.75"))
 TARGET_WIN_RATE = float(os.getenv("ADAPTIVE_TARGET_WIN_RATE", "0.40"))
 KP = float(os.getenv("ADAPTIVE_POP_KP", "0.10"))  # Controller's Proportional Gain
-POP_MIN = 0.60
-POP_MAX = 0.92
-MIN_SAMPLE_SIZE = 20  # Minimum window for statistical stability
+POP_MIN = float(os.getenv("ADAPTIVE_POP_MIN", "0.60"))
+POP_MAX = float(os.getenv("ADAPTIVE_POP_MAX", "0.92"))
+MIN_SAMPLE_SIZE = int(
+    os.getenv("ADAPTIVE_MIN_SAMPLE", "20")
+)  # Minimum window for statistical stability
 
 TELEMETRY_DB_PATH = os.getenv("TELEMETRY_DB_PATH", "/app/data/telemetry.db")
 
