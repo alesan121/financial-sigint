@@ -14,7 +14,7 @@
 # Installs Poetry, resolves dependencies and exports them to requirements.txt.
 # This stage is discarded at the end; only its output (installed deps) persists.
 # =============================================================================
-FROM python:3.12-slim AS builder
+FROM python:3.14-slim AS builder
 
 # Image metadata
 LABEL maintainer="Financial SIGINT Team"
@@ -49,7 +49,7 @@ RUN poetry export --format=requirements.txt --output=requirements.txt --only=mai
 # Minimal final image: only Python + production dependencies + source code.
 # No Poetry, no build tools, no test files.
 # =============================================================================
-FROM python:3.12-slim AS runtime
+FROM python:3.14-slim AS runtime
 
 LABEL maintainer="Financial SIGINT Team"
 LABEL version="0.1.0"
